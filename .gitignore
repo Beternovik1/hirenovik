@@ -57,3 +57,12 @@ terraform.tfstate
 terraform.tfstate.backup
 .terraform/
 *.tfvars
+
+# Terraform Lambda build artifacts
+infrastructure/modules/ml_inference/build/
+
+# AI-generated / internal docs — not for public repo
+ASIGNACION.md
+honest_project_review.md
+sql_results.md
+plans/

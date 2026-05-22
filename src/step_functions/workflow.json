@@ -1,0 +1,126 @@
+{
+  "Comment": "Hirenovik full pipeline: Crawl -> Clean -> Train -> Deploy",
+  "StartAt": "StartGlueCrawler",
+  "States": {
+    "StartGlueCrawler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startCrawler.sync",
+      "Parameters": {
+        "Name": "${crawler_name}"
+      },
+      "Next": "StartGlueJob",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "StartGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "${glue_job_name}",
+        "Arguments": {
+          "--raw_bucket": "${raw_bucket}",
+          "--curated_bucket": "${curated_bucket}"
+        }
+      },
+      "Next": "StartTraining",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "StartTraining": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createTrainingJob.sync",
+      "Parameters": {
+        "TrainingJobName": "hirenovik-xgboost-sfn",
+        "RoleArn": "${sagemaker_role_arn}",
+        "AlgorithmSpecification": {
+          "TrainingImage": "${training_image}",
+          "TrainingInputMode": "File"
+        },
+        "InputDataConfig": [
+          {
+            "ChannelName": "train",
+            "ContentType": "text/csv",
+            "DataSource": {
+              "S3DataSource": {
+                "S3DataType": "S3Prefix",
+                "S3Uri": "${training_data_path}/train/",
+                "S3DataDistributionType": "FullyReplicated"
+              }
+            }
+          },
+          {
+            "ChannelName": "validation",
+            "ContentType": "text/csv",
+            "DataSource": {
+              "S3DataSource": {
+                "S3DataType": "S3Prefix",
+                "S3Uri": "${training_data_path}/validation/",
+                "S3DataDistributionType": "FullyReplicated"
+              }
+            }
+          }
+        ],
+        "OutputDataConfig": {
+          "S3OutputPath": "${output_path}"
+        },
+        "ResourceConfig": {
+          "InstanceType": "ml.m5.large",
+          "InstanceCount": 1,
+          "VolumeSizeInGB": 20
+        },
+        "StoppingCondition": {
+          "MaxRuntimeInSeconds": 3600
+        },
+        "HyperParameters": {
+          "objective": "reg:squarederror",
+          "num_round": "100",
+          "max_depth": "6",
+          "eta": "0.1",
+          "subsample": "0.8",
+          "colsample_bytree": "0.8",
+          "eval_metric": "rmse"
+        }
+      },
+      "Next": "DeployEndpoint",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "DeployEndpoint": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sagemaker:createEndpoint",
+      "Parameters": {
+        "EndpointName": "hirenovik-salary-endpoint",
+        "EndpointConfigName": "hirenovik-salary-endpoint-config"
+      },
+      "End": true,
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "NotifyFailure"
+        }
+      ]
+    },
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${sns_alert_topic_arn}",
+        "Message": "Hirenovik pipeline execution failed. Check Step Functions console for details.",
+        "Subject": "Hirenovik Pipeline Failed"
+      },
+      "End": true
+    }
+  }
+}

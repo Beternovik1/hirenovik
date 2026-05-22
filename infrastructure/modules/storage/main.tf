@@ -13,6 +13,13 @@ resource "aws_s3_bucket" "models" {
   tags   = { Name = "hirenovik-models-${var.environment}", Layer = "ml" }
 }
 
+resource "aws_s3_bucket_versioning" "models" {
+  bucket = aws_s3_bucket.models.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket" "outputs" {
   bucket = "hirenovik-outputs-${var.environment}"
   tags   = { Name = "hirenovik-outputs-${var.environment}", Layer = "serving" }
@@ -40,6 +47,27 @@ resource "aws_s3_bucket_public_access_block" "models" {
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket" "input" {
+  bucket = "hirenovik-input-${var.environment}"
+  tags   = { Name = "hirenovik-input-${var.environment}", Layer = "ingestion" }
+}
+
+resource "aws_s3_bucket_public_access_block" "input" {
+  bucket                  = aws_s3_bucket.input.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "input" {
+  bucket = aws_s3_bucket.input.id
+  rule {
+    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+    bucket_key_enabled = true
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "outputs" {

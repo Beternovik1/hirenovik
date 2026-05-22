@@ -5,3 +5,9 @@ variable "aws_region" {
 variable "environment" {
   default = "dev"
 }
+
+variable "model_artifact_path" {
+  description = "S3 path to trained XGBoost model artifact. Set after training completes."
+  type        = string
+  default     = ""
+}

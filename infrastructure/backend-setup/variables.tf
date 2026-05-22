@@ -18,13 +18,13 @@ variable "aws_region" {
 variable "state_bucket_name" {
   description = "Nombre ÚNICO globalmente para el bucket S3 de estado"
   type        = string
-  default     = "hirenovik-tf-state-edgar-alfaro-2026"  
+  default     = "hirenovik-tf-state-edgar-alfaro-2026"
 }
 
 variable "lock_table_name" {
   description = "Nombre de la tabla DynamoDB para state locking"
   type        = string
-  default     = "hirenovik-tf-locks"  
+  default     = "hirenovik-tf-locks"
 }
 
 # DURACIÓN DE RETENCIÓN DE VERSIONES (días)

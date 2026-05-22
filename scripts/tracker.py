@@ -1,12 +1,11 @@
-print("SOY JOTO ALAVERGA")
 import pandas as pd
-pd.set_option('display.max_columns', None)  # Show all columns
-pd.set_option('display.width', 1000)        # Stop breaking rows into new lines
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 1000)
 pd.set_option('display.max_colwidth', None)
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from sqlalchemy.sql import func
-from models import db_connect, Job
+from src.database.models import db_connect, Job
 
 # Connecting to the DB
 engine = db_connect()
@@ -21,8 +20,8 @@ def show_to_do_list():
                 id, company, title, status,
                 COALESCE(last_updated, applied_date) as last_activity_on,
                 applied_date,
-                CAST(julianday(date('now')) - julianday(COALESCE(last_updated, applied_date)) AS INTEGER) as days_since_update,
-                CAST(julianday(date('now')) - julianday(applied_date) AS INTEGER) as days_since_applied
+                EXTRACT(DAY FROM NOW() - COALESCE(last_updated, applied_date))::int as days_since_update,
+                EXTRACT(DAY FROM NOW() - applied_date)::int as days_since_applied
             FROM jobs
             WHERE status IN ('APPLIED', 'SCREENING', 'INTERVIEW')
         )
@@ -87,7 +86,7 @@ def run_tracker():
                     SELECT id,
                             title,
                             company,
-                            location,
+                            raw_location,
                             site,
                             salary_min,
                             salary_max,
@@ -104,7 +103,7 @@ def run_tracker():
                         print("------------------------------------------------")
                         print(f"TITLE:   {row['title']}")
                         print(f"COMPANY: {row['company']}")
-                        print(f"LOCATION: {row['location']}")
+                        print(f"LOCATION: {row['raw_location']}")
                         print(f"SITE: {row['site']}")
                         print(f"SALARY:  {row['salary_min']} - {row['salary_max']}")
                         print(f"LINK:    {row['job_url']}")
