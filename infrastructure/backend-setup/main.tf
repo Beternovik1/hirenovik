@@ -26,7 +26,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project   = "Hirenovik" 
+      Project   = "Hirenovik"
       ManagedBy = "Terraform"
       Purpose   = "StateBackend"
     }

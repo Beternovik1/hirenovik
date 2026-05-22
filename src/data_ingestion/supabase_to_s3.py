@@ -47,7 +47,7 @@ S3_RAW_BUCKET = os.getenv("S3_RAW_BUCKET", "hirenovik-raw-dev")
 AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 CHECKPOINT_KEY = "supabase_exports/checkpoint/last_export.txt"
 
-EXPORT_QUERY = text("""
+BASE_QUERY = """
     SELECT
         id,
         site,
@@ -77,8 +77,7 @@ EXPORT_QUERY = text("""
         END as has_salary
     FROM jobs
     WHERE status IN ('NEW', 'PENDING_ENRICHMENT')
-    ORDER BY date_scraped DESC
-""")
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +104,7 @@ def extract_from_supabase(engine, checkpoint_date=None) -> pd.DataFrame:
         with engine.connect() as conn:
             if checkpoint_date:
                 logger.info("Incremental mode: exporting records after %s", checkpoint_date)
-                query = EXPORT_QUERY.text + " AND date_scraped > :checkpoint_date"
+                query = BASE_QUERY + " AND date_scraped > :checkpoint_date ORDER BY date_scraped DESC"
                 df = pd.read_sql(
                     text(query),
                     conn,
@@ -113,7 +112,8 @@ def extract_from_supabase(engine, checkpoint_date=None) -> pd.DataFrame:
                 )
             else:
                 logger.info("Full mode: exporting all records")
-                df = pd.read_sql(EXPORT_QUERY, conn)
+                query = BASE_QUERY + " ORDER BY date_scraped DESC"
+                df = pd.read_sql(text(query), conn)
         logger.info("Extraction complete. rows=%d columns=%d", len(df), len(df.columns))
         return df
     except SQLAlchemyError as exc:
