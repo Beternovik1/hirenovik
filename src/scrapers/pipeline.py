@@ -223,17 +223,37 @@ def run_local_enrichment_pipeline():
         total_orphaned = 0
         total_processed = 0
 
+        # Split daily limit evenly between both sites so OCC does not starve.
+        # If one site has fewer pending records than its half-quota,
+        # the unused slots go to the other site.
+        ct_count = len(urls_by_site.get("computrabajo", []))
+        occ_count = len(urls_by_site.get("occ", []))
+        half = daily_limit // 2
+
+        quotas = {}
+        quotas["computrabajo"] = min(ct_count, half)
+        quotas["occ"] = min(occ_count, half)
+
+        if ct_count < half:
+            quotas["occ"] = min(occ_count, daily_limit - ct_count)
+        elif occ_count < half:
+            quotas["computrabajo"] = min(ct_count, daily_limit - occ_count)
+
+        logger.info(
+            "Enrichment quotas: Computrabajo %d, OCC %d (limit %d)",
+            quotas["computrabajo"], quotas["occ"], daily_limit,
+        )
+
         for site in ["computrabajo", "occ"]:
             if site not in urls_by_site:
                 continue
 
-            urls = urls_by_site[site]
-            remaining = daily_limit - total_processed
-            if remaining <= 0:
-                logger.info("Daily enrichment limit (%d) reached", daily_limit)
-                break
+            quota = quotas[site]
+            if quota <= 0:
+                logger.info("Quota exhausted for %s, skipping", site)
+                continue
 
-            urls = urls[:remaining]
+            urls = urls_by_site[site][:quota]
 
             if site == "computrabajo":
                 scraper = ComputrabajoScraper()
