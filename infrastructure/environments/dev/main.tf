@@ -28,15 +28,16 @@ module "data_engineering" {
 }
 
 module "ml_inference" {
-  source             = "../../modules/ml_inference"
-  environment        = var.environment
-  curated_bucket_arn = module.storage.curated_bucket_arn
-  models_bucket_name = module.storage.models_bucket_name
-  models_bucket_arn  = module.storage.models_bucket_arn
-  region             = var.aws_region
-  input_bucket_name  = module.storage.input_bucket_name
-  input_bucket_arn   = module.storage.input_bucket_arn
-  raw_bucket_name    = module.storage.raw_bucket_name
+  source              = "../../modules/ml_inference"
+  environment         = var.environment
+  curated_bucket_arn  = module.storage.curated_bucket_arn
+  models_bucket_name  = module.storage.models_bucket_name
+  models_bucket_arn   = module.storage.models_bucket_arn
+  region              = var.aws_region
+  input_bucket_name   = module.storage.input_bucket_name
+  input_bucket_arn    = module.storage.input_bucket_arn
+  raw_bucket_name     = module.storage.raw_bucket_name
+  model_artifact_path = var.model_artifact_path
 }
 
 module "orchestration" {

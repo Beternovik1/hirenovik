@@ -10,22 +10,9 @@ resource "aws_sfn_state_machine" "pipeline" {
 
   definition = jsonencode({
     Comment = "Hirenovik pipeline: Crawl -> Clean -> Train -> Notify"
-    StartAt = "StartGlueCrawler"
+    StartAt = "StartGlueJob"  
 
     States = {
-      StartGlueCrawler = {
-        Type       = "Task"
-        Resource   = "arn:aws:states:::glue:startCrawler.sync"
-        Parameters = { Name = var.crawler_name }
-        Next       = "StartGlueJob"
-        Catch = [
-          {
-            ErrorEquals = ["States.ALL"]
-            Next        = "NotifyFailure"
-          }
-        ]
-      }
-
       StartGlueJob = {
         Type     = "Task"
         Resource = "arn:aws:states:::glue:startJobRun.sync"
@@ -35,6 +22,21 @@ resource "aws_sfn_state_machine" "pipeline" {
             "--raw_bucket"     = var.raw_bucket_name
             "--curated_bucket" = var.curated_bucket_name
           }
+        }
+        Next = "StartCrawler"
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            Next        = "NotifyFailure"
+          }
+        ]
+      }
+
+      StartCrawler = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::aws-sdk:glue:startCrawler"
+        Parameters = {
+          Name = var.crawler_name
         }
         Next = "StartTraining"
         Catch = [

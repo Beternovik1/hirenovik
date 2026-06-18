@@ -1,7 +1,6 @@
 locals {
   dashboard_body = jsonencode({
     widgets = [
-      # Widget 1 (REQUIRED): Glue Job duration over time — line chart
       {
         type   = "metric"
         x      = 0
@@ -20,7 +19,6 @@ locals {
           yAxis  = { left = { label = "Milliseconds" } }
         }
       },
-      # Widget 2 (REQUIRED): Files in Curated Zone — counter
       {
         type   = "metric"
         x      = 8
@@ -37,7 +35,6 @@ locals {
           period = 86400
         }
       },
-      # Widget 3 (REQUIRED): SageMaker endpoint error rate — metric
       {
         type   = "metric"
         x      = 16
@@ -45,20 +42,16 @@ locals {
         width  = 8
         height = 6
         properties = {
-          view    = "timeSeries"
+          view    = "singleValue"
           stacked = false
           metrics = [
-            ["AWS/SageMaker/Endpoints", "Invocation5XXErrors", "EndpointName", var.endpoint_name, "VariantName", "primary", { stat = "Sum", label = "5XX Errors", id = "m1" }],
-            ["AWS/SageMaker/Endpoints", "Invocations", "EndpointName", var.endpoint_name, "VariantName", "primary", { stat = "Sum", label = "Invocations", id = "m2" }],
-            [{ expression = "IF(m2>0, m1/m2*100, 0)", label = "Error Rate %", id = "e1", yAxis = "right" }]
+            ["AWS/SageMaker", "Invocation5XXErrors", "EndpointName", var.endpoint_name != "" ? var.endpoint_name : "hirenovik-salary-endpoint-dev", { stat = "Sum" }]
           ]
           region = var.region
-          title  = "SageMaker Endpoint Error Rate"
+          title  = "Endpoint Error Rate"
           period = 300
-          yAxis  = { left = { label = "Count" }, right = { label = "%" } }
         }
       },
-      # BONUS: Lambda inference duration
       {
         type   = "metric"
         x      = 0
@@ -77,7 +70,6 @@ locals {
           period = 300
         }
       },
-      # BONUS: Step Functions executions
       {
         type   = "metric"
         x      = 8

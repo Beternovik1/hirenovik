@@ -7,7 +7,7 @@ output "glue_database_name" {
 
 output "crawler_name" {
   description = "Name of the Glue Crawler"
-  value       = aws_glue_crawler.supabase_exports.name
+  value       = aws_glue_crawler.curated.name
 }
 
 output "job_name" {

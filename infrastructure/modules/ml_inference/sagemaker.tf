@@ -2,7 +2,7 @@
 
 data "aws_sagemaker_prebuilt_ecr_image" "xgboost" {
   repository_name = "sagemaker-xgboost"
-  image_tag       = "1.5-1"
+  image_tag       = "1.7-1"
 }
 
 # SageMaker Model — solo se crea cuando existe un modelo entrenado
