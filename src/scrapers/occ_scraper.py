@@ -80,6 +80,8 @@ class OCCScraper(BaseScraper):
             base_url = "https://www.occ.com.mx"
 
             page = 1
+            skipped_cards = 0
+            kept_cards = 0
             while True:
                 if len(records) >= max_results:
                     logger.info("max_results (%s) reached for %s", max_results, keyword)
@@ -121,6 +123,11 @@ class OCCScraper(BaseScraper):
                     data_id = card.get("data-id")
                     job_url = f"https://www.occ.com.mx/empleo/oferta/{data_id}/" if data_id else None
 
+                    if not job_url:
+                        # Malformed card — skip silently
+                        skipped_cards += 1
+                        continue
+
                     salary_min, salary_max = None, None
                     salary_tag = card.select_one("span.mr-2.text-grey-900.font-base.font-light")
                     if salary_tag:
@@ -159,8 +166,23 @@ class OCCScraper(BaseScraper):
                         "job_type": job_type,
                         "country_code": self.country_code,
                     })
+                    kept_cards += 1
 
                 page += 1
+
+            total_cards = skipped_cards + kept_cards
+            if total_cards > 0:
+                skip_pct = (skipped_cards / total_cards) * 100
+                if skip_pct > 50:
+                    logger.warning(
+                        "High skip rate for '%s': %d/%d cards skipped (%.0f%%) — possible DOM change",
+                        keyword, skipped_cards, total_cards, skip_pct,
+                    )
+                else:
+                    logger.info(
+                        "Cards processed for '%s': %d kept, %d skipped (%.0f%%)",
+                        keyword, kept_cards, skipped_cards, skip_pct,
+                    )
 
         return pd.DataFrame(records) if records else pd.DataFrame(columns=[
             "site", "job_url", "title", "company", "raw_location",
@@ -193,7 +215,7 @@ class OCCScraper(BaseScraper):
             
             # 2. Si no funcionan, aplicamos el anclaje por texto basado en la nueva estructura de OCC
             if not desc_tag:
-                desc_header = soup.find(lambda tag: tag.name == "p" and "Descripción:" in tag.get_text(strip=True))
+                desc_header = soup.find(lambda tag: tag.name == "p" and tag.get_text(strip=True).startswith("Descripci"))
                 if desc_header:
                     desc_tag = desc_header.find_parent("div")
                 else:

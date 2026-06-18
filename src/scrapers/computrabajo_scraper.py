@@ -127,6 +127,9 @@ class ComputrabajoScraper(BaseScraper):
                 currency = cfg["currency"]
                 base_url = f"https://{subdomain}.computrabajo.com"
 
+                skipped_cards = 0
+                kept_cards = 0
+
                 page = 1
                 while True:
                     if len(records) >= max_results:
@@ -170,6 +173,12 @@ class ComputrabajoScraper(BaseScraper):
 
                         href = title_tag.get("href") if title_tag else None
                         job_url = f"{base_url}{href}" if (href and href.startswith("/")) else href
+
+                        if not job_url:
+                            # Malformed card — promoted ad, banner, or DOM
+                            # change on the site. Skip silently.
+                            skipped_cards += 1
+                            continue
 
                         # Empresa y Ubicación
                         company, raw_location = None, None
@@ -215,6 +224,7 @@ class ComputrabajoScraper(BaseScraper):
                             "job_type": job_type,
                             "country_code": country_code,
                         })
+                        kept_cards += 1
 
                     next_btn = soup.select_one('span.b_primary.buildLink[data-path]')
                     if not next_btn:
@@ -222,6 +232,20 @@ class ComputrabajoScraper(BaseScraper):
                         break
 
                     page += 1
+
+                total_cards = skipped_cards + kept_cards
+                if total_cards > 0:
+                    skip_pct = (skipped_cards / total_cards) * 100
+                    if skip_pct > 50:
+                        logger.warning(
+                            "High skip rate for '%s' in %s: %d/%d cards skipped (%.0f%%) — possible DOM change",
+                            keyword, country_code, skipped_cards, total_cards, skip_pct,
+                        )
+                    else:
+                        logger.info(
+                            "Cards processed for '%s' in %s: %d kept, %d skipped (%.0f%%)",
+                            keyword, country_code, kept_cards, skipped_cards, skip_pct,
+                        )
 
         # NOTE: validate_output NOT called here — only called in scrape()
         # so that Phase 1 can be used independently without double-validation

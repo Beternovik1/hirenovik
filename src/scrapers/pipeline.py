@@ -30,6 +30,10 @@ def _map_phase1_records(df, search_term, industry_niche):
         "Hybrid": "hibrido",
     }
     for _, row in df.iterrows():
+        job_url = row.get("job_url")
+        if not job_url:
+            logger.warning("Skipping record with null job_url for %s", search_term)
+            continue
         raw_location = clean(row.get("raw_location"), "Ubicación desconocida")
         records.append({
             "site": row.get("site"),
