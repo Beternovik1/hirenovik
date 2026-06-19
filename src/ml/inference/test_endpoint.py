@@ -56,6 +56,13 @@ SAMPLE_JOBS = [
         "has_django": 0, "has_fastapi": 0, "has_go": 1, "has_rust": 0,
         "has_java": 0, "has_scala": 0,
     },
+    {
+        "title": "Data Scientist",
+        "seniority": 2,           
+        "modality": 0,            
+        "years_experience": 3,
+        "has_python": 1, "has_tensorflow": 1, "has_sql": 1, "has_pandas": 1,
+    }
 ]
 
 FEATURE_ORDER = [
@@ -106,7 +113,7 @@ def main():
     result = response["Body"].read().decode("utf-8").strip()
     try:
         prediction = float(result)
-        print(f"\nPredicted salary: ${prediction:,.0f} USD/year")
+        print(f"\nPredicted salary: ${prediction:,.0f} USD/month (approx. ${prediction * 12:,.0f} USD/year)")
     except ValueError:
         print(f"\nRaw response: {result}")
 
