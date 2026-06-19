@@ -65,9 +65,9 @@ df = df.filter(
 # ---------------------------------------------------------------------------
 df = df.withColumn(
     "seniority",
-    when(col("title").rlike("(?i)senior|sr\\.|lead|principal|staff"), 3)
-    .when(col("title").rlike("(?i)semi-senior|mid|intermediate|ssr"), 2)
-    .when(col("title").rlike("(?i)junior|jr\\.|trainee|entry"), 0)
+    when(col("title").rlike("(?i)(^|\\s)(semi-senior|mid|intermediate|ssr)(\\s|$)"), 2)
+    .when(col("title").rlike("(?i)(^|\\s)(senior|sr\\.?|lead|principal|staff)(\\s|$)"), 3)
+    .when(col("title").rlike("(?i)(^|\\s)(junior|jr\\.?|trainee|entry)(\\s|$)"), 0)
     .otherwise(1)
 )
 
