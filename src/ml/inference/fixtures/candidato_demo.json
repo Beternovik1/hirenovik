@@ -1,0 +1,19 @@
+{
+  "title": "Cloud Engineer Semi-Senior",
+  "job_url": "presentacion-en-vivo",
+  "seniority": 2,
+  "modality": 0,
+  "years_experience": 4,
+  "has_python": 1,
+  "has_aws": 1,
+  "has_docker": 1,
+  "has_kubernetes": 1,
+  "has_azure": 1,
+  "has_gcp": 1,
+  "has_terraform": 1,
+  "has_jenkins": 1,
+  "has_git": 1,
+  "has_linux": 1,
+  "has_mlops": 1,
+  "has_go": 1
+}
