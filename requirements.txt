@@ -37,3 +37,6 @@ typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.3
 urllib3==2.6.3
+pytest>=8.0
+pytest-mock>=3.12
+pytest-cov>=5.0
