@@ -11,7 +11,7 @@ from typing import Optional
 
 import numpy as np
 
-from src.api.schemas.prediction import SalaryFeatures, SalaryPrediction
+from src.api.schemas.prediction import KEYWORD_FEATURES, SalaryFeatures, SalaryPrediction
 
 logger = logging.getLogger(__name__)
 
@@ -51,28 +51,59 @@ def load_xgboost() -> Optional[object]:
 # Feature column order must match the XGBoost training data exactly.
 FEATURE_ORDER: list[str] = [
     "seniority", "modality", "years_experience",
-] + [f"has_{kw}" for kw in [
-    "python", "aws", "spark", "docker", "sql", "tensorflow",
-    "kubernetes", "airflow", "dbt", "kafka", "azure", "gcp",
-    "pytorch", "scikit", "pandas", "hadoop", "snowflake",
-    "bigquery", "redshift", "terraform", "jenkins", "git",
-    "linux", "mlops", "databricks", "powerbi", "tableau",
-    "mongodb", "postgresql", "mysql", "react", "nodejs",
-    "flask", "django", "fastapi", "go", "rust", "java", "scala",
-]]
+] + [f"has_{kw}" for kw in KEYWORD_FEATURES]
+
+
+def _skills_to_features(
+    seniority: int,
+    modality: int,
+    years_experience: int,
+    skills: list[str],
+) -> dict[str, int]:
+    """Convert a skills list into a 41-element feature dict.
+
+    The three numeric features are passed through unchanged. Each known
+    keyword in KEYWORD_FEATURES is mapped to a binary ``has_<kw>`` flag.
+    Unknown skills are silently ignored.
+
+    Args:
+        seniority: Seniority level (0-3).
+        modality: Work modality (0-2).
+        years_experience: Years of experience (0-6).
+        skills: List of technology skill names (case-insensitive).
+
+    Returns:
+        Dict with all 41 feature names mapped to integer values.
+    """
+    skill_set = {s.lower() for s in skills}
+    features: dict[str, int] = {
+        "seniority": seniority,
+        "modality": modality,
+        "years_experience": years_experience,
+    }
+    for kw in KEYWORD_FEATURES:
+        features[f"has_{kw}"] = 1 if kw in skill_set else 0
+    return features
 
 
 def predict_salary(model: object, features: SalaryFeatures) -> SalaryPrediction:
     """Run XGBoost prediction on a feature vector.
 
+    Converts the human-friendly ``skills`` list into the 41-element binary
+    feature vector expected by the model, then runs inference.
+
     Args:
         model: A loaded XGBoost Booster.
-        features: Feature values matching the model input format.
+        features: Salary features with seniority, modality, years_experience,
+            and a skills list.
 
     Returns:
         ``SalaryPrediction`` with the predicted salary midpoint in MXN.
     """
-    feature_values = [getattr(features, name) for name in FEATURE_ORDER]
+    all_features = _skills_to_features(
+        features.seniority, features.modality, features.years_experience, features.skills
+    )
+    feature_values = [all_features[name] for name in FEATURE_ORDER]
     feature_array = np.array([feature_values], dtype=np.float32)
 
     import xgboost as xgb
@@ -80,9 +111,8 @@ def predict_salary(model: object, features: SalaryFeatures) -> SalaryPrediction:
     dmatrix = xgb.DMatrix(feature_array, feature_names=FEATURE_ORDER)
     prediction = float(model.predict(dmatrix)[0])
 
-    features_used = {name: value for name, value in zip(FEATURE_ORDER, feature_values)}
     return SalaryPrediction(
         predicted_salary_mid_mxn=round(prediction, 2),
         currency="MXN",
-        features_used=features_used,
+        features_used=all_features,
     )

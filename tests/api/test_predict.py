@@ -14,7 +14,7 @@ def _mock_xgboost_model() -> MagicMock:
 
 
 def test_predict_salary_success(app, client):
-    """POST /predict/salary returns a salary prediction."""
+    """POST /predict/salary returns a salary prediction with skills list."""
     model = _mock_xgboost_model()
     app.state.xgboost = model
     try:
@@ -22,11 +22,7 @@ def test_predict_salary_success(app, client):
             "seniority": 3,
             "modality": 0,
             "years_experience": 6,
-            "has_python": 1,
-            "has_aws": 1,
-            "has_sql": 1,
-            "has_docker": 1,
-            "has_kubernetes": 1,
+            "skills": ["python", "aws", "sql", "docker", "kubernetes"],
         }
         response = client.post("/predict/salary", json=payload)
         assert response.status_code == 200
@@ -36,6 +32,8 @@ def test_predict_salary_success(app, client):
         assert "features_used" in data
         assert data["features_used"]["seniority"] == 3
         assert data["features_used"]["has_python"] == 1
+        assert data["features_used"]["has_aws"] == 1
+        assert data["features_used"]["has_java"] == 0  # not in skills list
     finally:
         app.state.xgboost = None
 
@@ -49,10 +47,28 @@ def test_predict_salary_defaults(app, client):
         response = client.post("/predict/salary", json=payload)
         assert response.status_code == 200
         data = response.json()
-        # Default values: seniority=1, modality=2, years_experience=2
         assert data["features_used"]["seniority"] == 1
         assert data["features_used"]["modality"] == 2
         assert data["features_used"]["years_experience"] == 2
+        assert data["features_used"]["has_python"] == 0
+        assert data["features_used"]["has_aws"] == 0
+    finally:
+        app.state.xgboost = None
+
+
+def test_predict_salary_unknown_skills_ignored(app, client):
+    """Unknown skills are silently ignored (treated as 0 in feature vector)."""
+    model = _mock_xgboost_model()
+    app.state.xgboost = model
+    try:
+        payload = {
+            "skills": ["python", "not-a-real-skill", "typescript"],
+        }
+        response = client.post("/predict/salary", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["features_used"]["has_python"] == 1
+        # unknown skills just don't affect the feature vector
     finally:
         app.state.xgboost = None
 

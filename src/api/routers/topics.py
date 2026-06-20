@@ -1,16 +1,16 @@
-"""Router for topic listing and detail endpoints.
+"""Router for topic listing, detail, and query expansion endpoints.
 
 Topics come from the BERTopic model loaded at startup and stored in
-``app.state.topic_model``. If the model is unavailable, endpoints
-return HTTP 503.
+``app.state.topic_model``. Query expansion uses the FAISS SearchEngine
+stored in ``app.state.search_engine``. If either is unavailable,
+endpoints return HTTP 503.
 """
 
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from fastapi import APIRouter, Query, Request
-
+from src.api.schemas.search import ExpandRequest, ExpandResponse
 from src.api.schemas.topic import TopicDetailResponse, TopicListResponse
-from src.api.services import topic_service
+from src.api.services import search_service, topic_service
 
 router = APIRouter()
 
@@ -24,8 +24,6 @@ def list_topics(
     """List BERTopic topics with pagination."""
     topic_model = request.app.state.topic_model
     if topic_model is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=503, detail="Topic model not loaded; run pipeline first"
         )
@@ -37,14 +35,31 @@ def get_topic(topic_id: int, request: Request) -> TopicDetailResponse:
     """Retrieve a single topic with its keywords."""
     topic_model = request.app.state.topic_model
     if topic_model is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=503, detail="Topic model not loaded; run pipeline first"
         )
     result = topic_service.get_topic(topic_model, topic_id)
     if result is None:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=404, detail=f"Topic {topic_id} not found")
     return result
+
+
+@router.post("/expand", response_model=ExpandResponse)
+def expand_query(
+    expand_request: ExpandRequest,
+    app_request: Request,
+) -> ExpandResponse:
+    """Iteratively expand a seed query into matching jobs (Pacheco-style)."""
+    search_engine = app_request.app.state.search_engine
+    if search_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Search engine not loaded; run the NLP pipeline first",
+        )
+    return search_service.expand(
+        search_engine,
+        seed_text=expand_request.seed_text,
+        rounds=expand_request.rounds,
+        threshold=expand_request.threshold,
+        top_k=expand_request.top_k,
+    )
