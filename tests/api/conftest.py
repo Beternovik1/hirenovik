@@ -10,10 +10,14 @@ in-memory SQLite stub. Routers are registered incrementally via the
 import logging
 import sys
 import types
+from datetime import datetime, timezone
 from typing import Optional
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import JSON, create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session
 
 logging.disable(logging.CRITICAL)
 
@@ -129,3 +133,108 @@ def client(app) -> "object":
     from starlette.testclient import TestClient
 
     return TestClient(app)
+
+
+@pytest.fixture
+def mock_db_session(app):
+    """Create a SQLite in-memory session with the jobs table and sample data.
+
+    Uses StaticPool so every connection shares the same in-memory database.
+    Registers a ``get_db`` override on the app so FastAPI routes use this
+    session instead of the production engine.
+    """
+    from sqlalchemy import StaticPool
+    from src.api.database import get_db
+    from src.database.models import Base, Job
+
+    # Swap JSONB -> JSON so SQLite can create the jobs table.
+    original_type = Job.__table__.c.keywords_json.type
+    Job.__table__.c.keywords_json.type = JSON()
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+
+    session = Session(engine, expire_on_commit=False)
+    now = datetime.now(tz=timezone.utc)
+    sample_jobs = [
+        Job(
+            id=1,
+            site="indeed",
+            job_url="https://indeed.com/job/1",
+            title="DATA ENGINEER",
+            company="Tech Corp",
+            raw_location="Leon, GTO",
+            country="Mexico",
+            country_code="MX",
+            state="Guanajuato",
+            career="Data Engineer",
+            industry_niche="Ingenieria de Datos",
+            job_type="remoto",
+            salary_min=25000,
+            salary_max=40000,
+            currency="MXN",
+            description="Build data pipelines",
+            status="NEW",
+            date_scraped=now,
+            last_updated=now,
+        ),
+        Job(
+            id=2,
+            site="computrabajo",
+            job_url="https://computrabajo.com/job/2",
+            title="CLOUD ENGINEER",
+            company="Cloud Inc",
+            raw_location="Remoto",
+            country="Mexico",
+            country_code="MX",
+            career="Cloud Engineer",
+            industry_niche="Infraestructura Cloud",
+            job_type="remoto",
+            salary_min=30000,
+            salary_max=50000,
+            currency="MXN",
+            description="Manage cloud infrastructure",
+            status="NEW",
+            date_scraped=now,
+            last_updated=now,
+        ),
+        Job(
+            id=3,
+            site="occ",
+            job_url="https://occ.com/job/3",
+            title="DATA ANALYST",
+            company="Analytics Co",
+            raw_location="CDMX",
+            country="Mexico",
+            country_code="MX",
+            state="CDMX",
+            career="Data Analyst",
+            industry_niche="Ingenieria de Datos",
+            job_type="presencial",
+            description="Analyze data",
+            status="NEW",
+            date_scraped=now,
+            last_updated=now,
+        ),
+    ]
+    session.add_all(sample_jobs)
+    session.commit()
+
+    # Override the get_db dependency to yield our test session.
+    def _override():
+        yield session
+
+    app.dependency_overrides[get_db] = _override
+
+    yield session
+
+    app.dependency_overrides.clear()
+    session.close()
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+    # Restore original JSONB type so other test modules are not affected.
+    Job.__table__.c.keywords_json.type = original_type

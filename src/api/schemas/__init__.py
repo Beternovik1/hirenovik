@@ -1,0 +1,1 @@
+"""Pydantic schemas for the API response and request models."""
