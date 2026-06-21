@@ -1,0 +1,52 @@
+# ============================================================
+# Stage 1: Build — install heavy NLP dependencies
+# ============================================================
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+# Install build deps for sentence-transformers and FAISS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only requirements to cache pip layer
+COPY requirements.txt .
+
+# Install ALL dependencies into a wheel cache dir
+RUN pip install --no-cache-dir --prefix=/install \
+    fastapi uvicorn[standard] pydantic-settings \
+    sqlalchemy psycopg2-binary python-dotenv \
+    sentence-transformers bertopic faiss-cpu xgboost \
+    numpy pandas boto3 httpx
+
+# ============================================================
+# Stage 2: Runtime — minimal production image
+# ============================================================
+FROM python:3.12-slim
+
+# Create non-root user
+RUN groupadd -r hirenovik && useradd -r -g hirenovik -d /app hirenovik
+
+WORKDIR /app
+
+# Copy installed packages from builder
+COPY --from=builder /install /usr/local
+
+# Copy application code (only the API layer and its dependencies)
+COPY src/ /app/src/
+COPY requirements.txt /app/
+
+# Create directories for NLP model artifacts (mounted volume in production)
+RUN mkdir -p /app/src/nlp/models && chown -R hirenovik:hirenovik /app
+
+# Switch to non-root user
+USER hirenovik
+
+# Health check — pings the / endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
+
+EXPOSE 8000
+
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
