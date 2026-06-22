@@ -5,7 +5,6 @@ import {
   formatSalary,
 } from "@/lib/api";
 import SkillTag from "@/components/SkillTag";
-import JobCard from "@/components/JobCard";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -31,9 +30,10 @@ export default async function TopicDetailPage({ params }) {
   }
 
   const keywords = topic.keywords || [];
-  const examples = examplesData?.results || examplesData?.jobs || examplesData?.items || [];
-  const trends = trendsData?.weekly || trendsData?.trends || trendsData?.items || [];
-  const isTrending = trendsData?.trending ?? false;
+  const examples = examplesData?.examples || [];
+  const trends = trendsData?.items || [];
+  const trendingIds = new Set(trendsData?.trending_topic_ids || []);
+  const isTrending = trendingIds.has(Number(id));
 
   const count = topic.count ?? topic.job_count ?? 0;
   const coherence =
@@ -95,9 +95,20 @@ export default async function TopicDetailPage({ params }) {
           <h2 className="text-lg font-semibold text-hirenovik-text mb-4">
             Example jobs
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {examples.map((j) => (
-              <JobCard key={j.id} job={j} />
+          <div className="space-y-2">
+            {examples.map((ex) => (
+              <Link
+                key={ex.job_id}
+                href={`/jobs/${ex.job_id}`}
+                className="flex items-center justify-between bg-hirenovik-card rounded-lg p-4 border border-hirenovik-border hover:border-hirenovik-link transition-colors"
+              >
+                <span className="text-hirenovik-text font-medium truncate mr-4">
+                  {ex.title || `Job #${ex.job_id}`}
+                </span>
+                <span className="text-hirenovik-accent text-sm font-mono shrink-0">
+                  {Math.round(Number(ex.score) * 100)}%
+                </span>
+              </Link>
             ))}
           </div>
         </section>
