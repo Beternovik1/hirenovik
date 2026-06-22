@@ -9,7 +9,11 @@ endpoints return HTTP 503.
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from src.api.schemas.search import ExpandRequest, ExpandResponse
-from src.api.schemas.topic import TopicDetailResponse, TopicListResponse
+from src.api.schemas.topic import (
+    TopicDetailResponse,
+    TopicExamplesResponse,
+    TopicListResponse,
+)
 from src.api.services import search_service, topic_service
 
 router = APIRouter()
@@ -41,6 +45,26 @@ def get_topic(topic_id: int, request: Request) -> TopicDetailResponse:
     result = topic_service.get_topic(topic_model, topic_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Topic {topic_id} not found")
+    return result
+
+
+@router.get("/{topic_id}/examples", response_model=TopicExamplesResponse)
+def get_topic_examples(
+    topic_id: int,
+    request: Request,
+    k: int = Query(5, ge=1, le=20, description="Number of examples"),
+) -> TopicExamplesResponse:
+    """Return the k most representative jobs for a topic."""
+    topic_model = request.app.state.topic_model
+    search_engine = request.app.state.search_engine
+    if topic_model is None or search_engine is None:
+        raise HTTPException(status_code=503, detail="Models not loaded")
+    result = topic_service.get_topic_examples(topic_model, search_engine, topic_id, k=k)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Topic {topic_id} not found or engine unavailable",
+        )
     return result
 
 

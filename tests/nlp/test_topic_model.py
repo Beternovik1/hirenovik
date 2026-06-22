@@ -6,6 +6,7 @@ import sys
 import types
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -63,7 +64,7 @@ class TestFit:
         fake_instance.fit_transform.return_value = (["Topic_0"], None)
         fake_bertopic.BERTopic.return_value = fake_instance
 
-        topic_model = TopicModel(embedder=embedder, min_topic_size=10)
+        topic_model = TopicModel(embedder=embedder, min_topic_size=30)
         docs = ["doc one", "doc two", "doc three"]
         topic_model.fit(docs)
         assert topic_model._model is fake_instance
@@ -76,13 +77,32 @@ class TestFit:
         fake_instance.fit_transform.return_value = (["Topic_0"], None)
         fake_bertopic.BERTopic.return_value = fake_instance
 
-        topic_model = TopicModel(embedder=embedder, min_topic_size=10)
+        topic_model = TopicModel(embedder=embedder, min_topic_size=30)
         # Very few documents (< min_topic_size). Should not raise.
         topic_model.fit(["only one doc"])
-        # HDBSCAN min_topic_size should be clamped down.
+        # HDBSCAN min_cluster_size should be clamped down.
         assert fake_hdbscan.HDBSCAN.call_count == 1
         kwargs = fake_hdbscan.HDBSCAN.call_args.kwargs
-        assert kwargs["min_topic_size"] == 1
+        assert kwargs["min_cluster_size"] == 1
+
+    def test_hdbscan_uses_correct_parameter_name(
+        self, embedder, mock_topic_deps
+    ) -> None:
+        """Regression: HDBSCAN must receive min_cluster_size, not min_topic_size."""
+        fake_bertopic, fake_umap, fake_hdbscan = mock_topic_deps
+        fake_instance = MagicMock()
+        fake_instance.fit_transform.return_value = (["Topic_0"], None)
+        fake_bertopic.BERTopic.return_value = fake_instance
+
+        topic_model = TopicModel(embedder=embedder, min_topic_size=30)
+        topic_model.fit(["doc one", "doc two", "doc three"])
+        assert fake_hdbscan.HDBSCAN.call_count == 1
+        kwargs = fake_hdbscan.HDBSCAN.call_args.kwargs
+        # The correct HDBSCAN parameter name is min_cluster_size.
+        assert "min_cluster_size" in kwargs
+        assert "min_topic_size" not in kwargs
+        assert kwargs["min_samples"] == 1
+        assert kwargs["prediction_data"] is True
 
 
 class TestGetTopicInfo:
@@ -152,6 +172,8 @@ class TestAssignToDb:
         )
         mapping = topic_model.assign_to_db(df)
         assert mapping == {100: 0, 200: 1}
+        # assign_to_db also populates the topic-to-doc mapping.
+        assert topic_model._topic_docs == {0: [100], 1: [200]}
         # Two updates issued against the session.
         assert mock_session.execute.call_count == 2
         mock_session.commit.assert_called_once()
@@ -173,6 +195,8 @@ class TestSaveLoad:
     def test_save_and_load_roundtrip(self, embedder, tmp_path) -> None:
         model_path = str(tmp_path / "model.pkl")
         keywords_path = str(tmp_path / "kw.json")
+        coherence_path = str(tmp_path / "coherence.json")
+        docs_path = str(tmp_path / "docs.json")
 
         topic_model = TopicModel(embedder=embedder)
         # Use a picklable stub instead of MagicMock (mocks cannot be pickled).
@@ -180,8 +204,11 @@ class TestSaveLoad:
         topic_model._model = stub
         topic_model._topic_keywords = {0: ["python"]}
 
-        # Override default keywords path to tmp_path so save/load uses tmp.
-        with patch.object(TopicModel, "DEFAULT_KEYWORDS_PATH", keywords_path):
+        # Patch all artifact paths to tmp_path so the test never reads or
+        # writes the real on-disk model artifacts.
+        with patch.object(TopicModel, "DEFAULT_KEYWORDS_PATH", keywords_path), \
+                patch.object(TopicModel, "DEFAULT_COHERENCE_PATH", coherence_path), \
+                patch.object(TopicModel, "DEFAULT_DOCS_PATH", docs_path):
             topic_model.save(model_path)
             assert os.path.exists(model_path)
             assert os.path.exists(keywords_path)
@@ -190,10 +217,16 @@ class TestSaveLoad:
             assert isinstance(loaded._model, FitTopicModel)
             assert loaded._model.fitted is True
             assert loaded._topic_keywords == {0: ["python"]}
+            assert loaded._coherence == {}
+            assert loaded._topic_docs == {}
 
     def test_keywords_json_is_serializable(self, embedder, tmp_path) -> None:
         keywords_path = str(tmp_path / "kw.json")
-        with patch.object(TopicModel, "DEFAULT_KEYWORDS_PATH", keywords_path):
+        coherence_path = str(tmp_path / "coherence.json")
+        docs_path = str(tmp_path / "docs.json")
+        with patch.object(TopicModel, "DEFAULT_KEYWORDS_PATH", keywords_path), \
+                patch.object(TopicModel, "DEFAULT_COHERENCE_PATH", coherence_path), \
+                patch.object(TopicModel, "DEFAULT_DOCS_PATH", docs_path):
             topic_model = TopicModel(embedder=embedder)
             topic_model._model = FitTopicModel()
             topic_model._topic_keywords = {0: ["python", "aws"], -1: []}
@@ -202,8 +235,122 @@ class TestSaveLoad:
             loaded = json.load(fh)
         assert loaded["0"] == ["python", "aws"]
 
+    def test_save_and_load_persists_coherence_and_docs(
+        self, embedder, tmp_path
+    ) -> None:
+        model_path = str(tmp_path / "model.pkl")
+        keywords_path = str(tmp_path / "kw.json")
+        coherence_path = str(tmp_path / "coherence.json")
+        docs_path = str(tmp_path / "docs.json")
+
+        topic_model = TopicModel(embedder=embedder)
+        topic_model._model = FitTopicModel()
+        topic_model._topic_keywords = {0: ["python"]}
+        topic_model._coherence = {0: 0.85, 1: 0.72}
+        topic_model._topic_docs = {0: [1, 2], 1: [3]}
+
+        with patch.object(TopicModel, "DEFAULT_KEYWORDS_PATH", keywords_path), \
+                patch.object(TopicModel, "DEFAULT_COHERENCE_PATH", coherence_path), \
+                patch.object(TopicModel, "DEFAULT_DOCS_PATH", docs_path):
+            topic_model.save(model_path)
+            assert os.path.exists(coherence_path)
+            assert os.path.exists(docs_path)
+            loaded = TopicModel.load(model_path, embedder=embedder)
+
+        assert loaded._coherence == {0: 0.85, 1: 0.72}
+        assert loaded._topic_docs == {0: [1, 2], 1: [3]}
+
+
+class TestComputeCoherence:
+    def test_compute_coherence_basic(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        # Two tight clusters of two points each.
+        embeddings = np.array(
+            [
+                [1.0, 0.0],
+                [0.95, 0.05],
+                [0.0, 1.0],
+                [0.05, 0.95],
+            ],
+            dtype=np.float32,
+        )
+        assignments = [0, 0, 1, 1]
+        coherence = topic_model.compute_coherence(embeddings, assignments)
+        assert set(coherence.keys()) == {0, 1}
+        assert 0.0 < coherence[0] <= 1.0
+        assert 0.0 < coherence[1] <= 1.0
+
+    def test_compute_coherence_skips_topic_minus_one(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        embeddings = np.array([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+        coherence = topic_model.compute_coherence(embeddings, [-1, 0])
+        assert -1 not in coherence
+        # Topic 0 has only one doc -> coherence 0.0.
+        assert coherence == {0: 0.0}
+
+    def test_compute_coherence_single_doc_topic_is_zero(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        embeddings = np.array(
+            [[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]], dtype=np.float32
+        )
+        coherence = topic_model.compute_coherence(embeddings, [0, 0, 1])
+        assert coherence[1] == 0.0
+
+    def test_compute_coherence_length_mismatch_raises(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        embeddings = np.array([[1.0, 0.0]], dtype=np.float32)
+        with pytest.raises(ValueError):
+            topic_model.compute_coherence(embeddings, [0, 1])
+
+    def test_get_coherence_returns_cached(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        embeddings = np.array(
+            [[1.0, 0.0], [0.9, 0.1]], dtype=np.float32
+        )
+        topic_model.compute_coherence(embeddings, [0, 0])
+        cached = topic_model.get_coherence()
+        assert 0 in cached
+        assert cached[0] == topic_model._coherence[0]
+
+    def test_get_coherence_empty_when_unset(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        assert topic_model.get_coherence() == {}
+
+
+class TestGetTopicDocs:
+    def test_get_topic_docs_empty_when_unset(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        assert topic_model.get_topic_docs(0) == []
+
+    def test_get_topic_docs_returns_populated_list(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        topic_model._topic_docs = {0: [10, 20], 1: [30]}
+        assert topic_model.get_topic_docs(0) == [10, 20]
+        assert topic_model.get_topic_docs(1) == [30]
+        assert topic_model.get_topic_docs(99) == []
+
+    def test_get_topic_docs_returns_copy_not_reference(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        topic_model._topic_docs = {0: [1, 2]}
+        result = topic_model.get_topic_docs(0)
+        result.append(999)
+        assert topic_model._topic_docs[0] == [1, 2]
+
+
+class TestInitDefaults:
+    def test_default_min_topic_size_is_30(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        assert topic_model.min_topic_size == 30
+
+    def test_init_initializes_coherence_and_docs(self, embedder) -> None:
+        topic_model = TopicModel(embedder=embedder)
+        assert topic_model._coherence == {}
+        assert topic_model._topic_docs == {}
+
 
 class TestConstants:
     def test_default_paths_are_constants(self) -> None:
         assert TopicModel.DEFAULT_MODEL_PATH == "src/nlp/models/bertopic_model.pkl"
         assert TopicModel.DEFAULT_KEYWORDS_PATH == "src/nlp/models/topic_keywords.json"
+        assert TopicModel.DEFAULT_COHERENCE_PATH == "src/nlp/models/topic_coherence.json"
+        assert TopicModel.DEFAULT_DOCS_PATH == "src/nlp/models/topic_docs.json"

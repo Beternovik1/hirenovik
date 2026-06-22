@@ -14,6 +14,7 @@ import os
 import pickle
 from typing import Optional
 
+import numpy as np
 import pandas as pd
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -28,6 +29,12 @@ DEFAULT_MODEL_PATH = "src/nlp/models/bertopic_model.pkl"
 
 #: Default on-disk path for the topic-keywords JSON artifact.
 DEFAULT_KEYWORDS_PATH = "src/nlp/models/topic_keywords.json"
+
+#: Default on-disk path for the topic-coherence JSON artifact.
+DEFAULT_COHERENCE_PATH = "src/nlp/models/topic_coherence.json"
+
+#: Default on-disk path for the topic-to-document mapping JSON artifact.
+DEFAULT_DOCS_PATH = "src/nlp/models/topic_docs.json"
 
 
 class TopicModel:
@@ -47,12 +54,14 @@ class TopicModel:
 
     DEFAULT_MODEL_PATH = DEFAULT_MODEL_PATH
     DEFAULT_KEYWORDS_PATH = DEFAULT_KEYWORDS_PATH
+    DEFAULT_COHERENCE_PATH = DEFAULT_COHERENCE_PATH
+    DEFAULT_DOCS_PATH = DEFAULT_DOCS_PATH
 
     def __init__(
         self,
         embedder: Embedder,
         n_gram_range: tuple = (1, 2),
-        min_topic_size: int = 10,
+        min_topic_size: int = 30,
         verbose: bool = True,
     ) -> None:
         self.embedder = embedder
@@ -61,6 +70,8 @@ class TopicModel:
         self.verbose = verbose
         self._model = None
         self._topic_keywords: dict[int, list[str]] = {}
+        self._coherence: dict[int, float] = {}
+        self._topic_docs: dict[int, list[int]] = {}
 
     def fit(self, documents: list[str]) -> None:
         """Fit a BERTopic model on ``documents``.
@@ -77,10 +88,44 @@ class TopicModel:
         from umap import UMAP
         from hdbscan import HDBSCAN
 
+        # Spanish + English stopwords so common function words do NOT
+        # become topic names (e.g. "de_and_en_to" was dominating).
+        _ES_STOPWORDS = {
+            "de", "la", "que", "el", "en", "y", "a", "los", "se", "del",
+            "las", "un", "por", "con", "no", "una", "su", "para", "es",
+            "al", "lo", "como", "mas", "pero", "sus", "le", "ya", "o",
+            "este", "si", "porque", "esta", "entre", "cuando", "muy",
+            "sin", "sobre", "tambien", "me", "hasta", "hay", "donde",
+            "quien", "todo", "nos", "durante", "todos", "uno", "les",
+            "ni", "contra", "otros", "ese", "eso", "ante", "ellos",
+            "e", "esto", "mi", "antes", "algunos", "que", "otro",
+            "otras", "otra", "el", "tanto", "esa", "estos", "mucho",
+            "poco", "ella", "estar", "estas", "algunas", "algo",
+            "nosotros", "mi", "mis", "tu", "te", "ti", "vos",
+        }
+        _EN_STOPWORDS = {
+            "the", "a", "an", "and", "or", "but", "in", "on", "at",
+            "to", "for", "of", "with", "from", "by", "as", "is", "was",
+            "are", "be", "been", "being", "have", "has", "had", "do",
+            "does", "did", "will", "would", "could", "should", "may",
+            "might", "can", "shall", "you", "your", "we", "our", "they",
+            "them", "their", "it", "its", "he", "she", "his", "her",
+            "this", "that", "these", "those", "not", "no", "if", "so",
+            "than", "then", "also", "just", "now", "very", "too", "all",
+            "some", "any", "each", "every", "both", "few", "more", "most",
+            "other", "such", "only", "own", "same", "into", "up", "out",
+            "about", "over", "after", "before", "between", "under",
+            "again", "further", "here", "there", "when", "where", "why",
+            "how", "which", "who", "whom", "what",
+        }
+        stop_words = list(_ES_STOPWORDS | _EN_STOPWORDS)
+
         effective_min = min(self.min_topic_size, max(len(documents), 1))
-        vectorizer = CountVectorizer(ngram_range=self.n_gram_range)
+        vectorizer = CountVectorizer(
+            ngram_range=self.n_gram_range, stop_words=stop_words
+        )
         umap_model = UMAP(n_neighbors=min(15, max(len(documents), 2)), random_state=42)
-        hdbscan_model = HDBSCAN(min_topic_size=effective_min)
+        hdbscan_model = HDBSCAN(min_cluster_size=effective_min, min_samples=1, prediction_data=True)
         self._model = BERTopic(
             embedding_model=self.embedder._model if self.embedder._model else None,
             umap_model=umap_model,
@@ -88,6 +133,7 @@ class TopicModel:
             vectorizer_model=vectorizer,
             verbose=self.verbose,
             calculate_probabilities=False,
+            nr_topics="auto",
         )
         self._model.fit_transform(documents)
         self._refresh_topic_keywords()
@@ -162,9 +208,91 @@ class TopicModel:
             job_ids[i]: int(topics[i]) for i in range(len(job_ids))
         }
 
+        # Populate the topic-to-document mapping for later inspection.
+        self._topic_docs = {}
+        for job_id, topic_id in mapping.items():
+            self._topic_docs.setdefault(int(topic_id), []).append(int(job_id))
+
         self._persist_topics(mapping)
         logger.info("Assigned topics to %d jobs", len(mapping))
         return mapping
+
+    def get_topic_docs(self, topic_id: int) -> list[int]:
+        """Return the job ids assigned to ``topic_id``.
+
+        Args:
+            topic_id: BERTopic topic identifier.
+
+        Returns:
+            List of job ids assigned to the topic, or an empty list if
+            the topic has no documents or has not been assigned.
+        """
+        return list(self._topic_docs.get(int(topic_id), []))
+
+    def compute_coherence(
+        self,
+        embeddings: np.ndarray,
+        topic_assignments: list[int],
+    ) -> dict[int, float]:
+        """Compute per-topic coherence as mean centroid cosine similarity.
+
+        For each topic, the centroid of its assigned embeddings is
+        computed and the average cosine similarity of the members to the
+        centroid is returned. Embeddings are L2-normalized before the
+        similarity is computed so the metric ranges from -1 to 1.
+
+        Args:
+            embeddings: ``(n_docs, dim)`` float32 array of document
+                embeddings aligned with ``topic_assignments``.
+            topic_assignments: Topic id for each row in ``embeddings``.
+
+        Returns:
+            Mapping ``{topic_id: coherence_float}`` excluding topic -1.
+            Topics with 0-1 documents have coherence ``0.0``.
+        """
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+        if embeddings.ndim != 2:
+            raise ValueError("embeddings must be a 2D array (n_docs, dim)")
+        if embeddings.shape[0] != len(topic_assignments):
+            raise ValueError(
+                "embeddings and topic_assignments must have the same length"
+            )
+
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        normalized = embeddings / norms
+
+        unique_topics = set(int(t) for t in topic_assignments)
+        coherence: dict[int, float] = {}
+        for topic_id in unique_topics:
+            if topic_id == -1:
+                continue
+            positions = [
+                i for i, t in enumerate(topic_assignments) if int(t) == topic_id
+            ]
+            if len(positions) <= 1:
+                coherence[int(topic_id)] = 0.0
+                continue
+            members = normalized[positions]
+            centroid = members.mean(axis=0, keepdims=True)
+            centroid_norm = np.linalg.norm(centroid, axis=1, keepdims=True)
+            centroid_norm = np.where(centroid_norm == 0, 1.0, centroid_norm)
+            centroid_normalized = centroid / centroid_norm
+            sims = members @ centroid_normalized.reshape(-1)
+            coherence[int(topic_id)] = float(sims.mean())
+
+        self._coherence = coherence
+        logger.info("Computed coherence for %d topics", len(coherence))
+        return coherence
+
+    def get_coherence(self) -> dict[int, float]:
+        """Return the cached coherence mapping ``{topic_id: float}``.
+
+        The mapping is populated by :meth:`compute_coherence` or loaded
+        from disk by :meth:`load`. Returns an empty dict if coherence
+        has not been computed.
+        """
+        return dict(self._coherence)
 
     def _persist_topics(self, mapping: dict[int, int]) -> None:
         """Update keywords_json in Supabase for each job in ``mapping``."""
@@ -199,6 +327,22 @@ class TopicModel:
             pickle.dump(self._model, fh)
         with open(self.DEFAULT_KEYWORDS_PATH, "w", encoding="utf-8") as fh:
             json.dump(self._topic_keywords, fh, ensure_ascii=False, indent=2)
+        if self._coherence:
+            with open(self.DEFAULT_COHERENCE_PATH, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {str(k): v for k, v in self._coherence.items()},
+                    fh,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+        if self._topic_docs:
+            with open(self.DEFAULT_DOCS_PATH, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {str(k): v for k, v in self._topic_docs.items()},
+                    fh,
+                    ensure_ascii=False,
+                    indent=2,
+                )
         logger.info("Saved TopicModel to %s", path)
 
     @classmethod
@@ -229,7 +373,36 @@ class TopicModel:
         instance = cls(embedder=embedder) if embedder is not None else cls(embedder=Embedder())
         instance._model = model
         instance._topic_keywords = topic_keywords
+        # Load coherence from disk if available.
+        coherence: dict[int, float] = {}
+        if os.path.exists(cls.DEFAULT_COHERENCE_PATH):
+            try:
+                with open(cls.DEFAULT_COHERENCE_PATH, encoding="utf-8") as fh:
+                    coherence = {
+                        int(k): float(v) for k, v in json.load(fh).items()
+                    }
+            except (json.JSONDecodeError, ValueError):
+                coherence = {}
+        instance._coherence = coherence
+        # Load topic->docs mapping from disk if available.
+        topic_docs: dict[int, list[int]] = {}
+        if os.path.exists(cls.DEFAULT_DOCS_PATH):
+            try:
+                with open(cls.DEFAULT_DOCS_PATH, encoding="utf-8") as fh:
+                    topic_docs = {
+                        int(k): [int(i) for i in v]
+                        for k, v in json.load(fh).items()
+                    }
+            except (json.JSONDecodeError, ValueError):
+                topic_docs = {}
+        instance._topic_docs = topic_docs
         return instance
 
 
-__all__: list[str] = ["TopicModel", "DEFAULT_MODEL_PATH", "DEFAULT_KEYWORDS_PATH"]
+__all__: list[str] = [
+    "TopicModel",
+    "DEFAULT_MODEL_PATH",
+    "DEFAULT_KEYWORDS_PATH",
+    "DEFAULT_COHERENCE_PATH",
+    "DEFAULT_DOCS_PATH",
+]

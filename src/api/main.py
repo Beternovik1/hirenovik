@@ -110,6 +110,7 @@ async def lifespan(app: FastAPI) -> None:
     app.state.xgboost = _try_load_xgboost()
 
     logger.info("Startup complete; app ready to serve requests")
+    yield
 
 
 def create_app() -> FastAPI:
@@ -128,6 +129,15 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    from src.api.routers import jobs, topics, trends, skills, search, predict
+
+    app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
+    app.include_router(topics.router, prefix="/topics", tags=["topics"])
+    app.include_router(trends.router, prefix="/trends", tags=["trends"])
+    app.include_router(skills.router, prefix="/skills", tags=["skills"])
+    app.include_router(search.router, prefix="/search", tags=["search"])
+    app.include_router(predict.router, prefix="/predict", tags=["predict"])
 
     @app.get("/", tags=["health"])
     def health_check() -> dict:  # type: ignore[no-untyped-def]

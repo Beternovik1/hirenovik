@@ -110,6 +110,38 @@ class TestBuildIndex:
         norms = np.linalg.norm(engine._embeddings, axis=1)
         assert np.allclose(norms, 1.0, atol=1e-6)
 
+    def test_build_index_deduplicates_by_job_id(self, embedder, mock_faiss) -> None:
+        # Same job_id appearing multiple times must be collapsed to one vector.
+        documents = ["doc one", "doc one dup", "doc two"]
+        doc_ids = [10, 10, 20]
+        engine = SearchEngine(embedder=embedder)
+        fake_model = MagicMock()
+        preset = np.array(
+            [[1.0, 0.0, 0.0], [0.5, 0.5, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32
+        )
+        # Return an array row count matching the (post-dedup) input length.
+        fake_model.encode.side_effect = lambda texts, **kwargs: preset[: len(texts)]
+        engine.embedder._model = fake_model
+        engine.build_index(documents, doc_ids)
+        # Only two unique ids remain; first occurrence wins for duplicates.
+        assert engine._id_mapping == [10, 20]
+        assert engine._documents == ["doc one", "doc two"]
+        assert engine._embeddings.shape == (2, 3)
+
+    def test_build_index_preserves_order_for_unique_ids(
+        self, embedder, mock_faiss
+    ) -> None:
+        documents = ["doc a", "doc b", "doc c"]
+        doc_ids = [100, 200, 300]
+        engine = SearchEngine(embedder=embedder)
+        fake_model = MagicMock()
+        fake_model.encode.return_value = np.array(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
+        )
+        engine.embedder._model = fake_model
+        engine.build_index(documents, doc_ids)
+        assert engine._id_mapping == [100, 200, 300]
+
 
 class TestQuery:
     def _build_engine(self, embedder, mock_faiss) -> SearchEngine:

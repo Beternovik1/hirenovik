@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 #: Query used to fetch descriptions from the jobs table.
 _LOAD_QUERY = (
-    "SELECT id, description, career, date_scraped "
+    "SELECT id, description, career, date_scraped, salary_min, salary_max "
     "FROM jobs "
     "WHERE description IS NOT NULL"
 )
@@ -37,6 +37,18 @@ _MARKDOWN_LIST_PATTERN = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 _BULLET_PATTERN = re.compile(r"[\u2022\u2023\u25e6\u2043\u204c\uf0b7]")
 _SPECIAL_CHARS_PATTERN = re.compile(r"[^\w\s,.;:()\-/+\u00C0-\u017F\u00C0-\u00FF]")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+
+#: Recruiter noise and HTML artifacts that survive BS4 (applied after URLs,
+#: before special-char cleanup). Each entry is a (compiled regex, replacement)
+#: pair. Order matters: specific multi-word phrases run before the generic
+#: repeated-word deduper so they do not get split apart first.
+_GARBAGE_PATTERNS = [
+    (re.compile(r"please\s+click\s+here", re.IGNORECASE), ""),
+    (re.compile(r"click\s+here", re.IGNORECASE), ""),
+    (re.compile(r"ntt\s+ntt", re.IGNORECASE), ""),
+    (re.compile(r"ntt\s+data", re.IGNORECASE), ""),
+    (re.compile(r"\b(\w+)\s+\1\b"), r"\1"),  # repeated adjacent words
+]
 
 
 class TextPreprocessor:
@@ -114,6 +126,9 @@ class TextPreprocessor:
         text = _BULLET_PATTERN.sub("", text)
         # URLs.
         text = _URL_PATTERN.sub("", text)
+        # Recruiter noise and HTML artifacts that survive BS4.
+        for pattern, repl in _GARBAGE_PATTERNS:
+            text = pattern.sub(repl, text)
         # Special characters (preserve accented Latin letters).
         text = _SPECIAL_CHARS_PATTERN.sub(" ", text)
         # Whitespace normalization.

@@ -105,12 +105,19 @@ def _run_topic_model(
         Fitted :class:`TopicModel`.
     """
     logger.info("Step 'topic_model': starting")
-    topic_model = TopicModel(embedder=embedder, min_topic_size=10)
+    topic_model = TopicModel(embedder=embedder, min_topic_size=30)
     if documents:
         topic_model.fit(documents)
-        topic_model.save()
         topics = topic_model.assign_topics(documents)
         df["topic_id"] = topics
+        # Populate the topic-to-document mapping so the representative-jobs
+        # endpoint can resolve topic members after the model is reloaded.
+        job_ids = [int(i) for i in df["id"].tolist()] if len(df) > 0 else []
+        topic_docs: dict[int, list[int]] = {}
+        for job_id, topic_id in zip(job_ids, topics):
+            topic_docs.setdefault(int(topic_id), []).append(int(job_id))
+        topic_model._topic_docs = topic_docs
+        topic_model.save()
     else:
         df["topic_id"] = []
         topic_model._model = None
@@ -213,6 +220,25 @@ def run_pipeline(steps: Optional[list[str]] = None) -> dict:
         else:
             _time("build_index", lambda: _run_build_index(embedder, topic_model, df))
             search_engine = artifacts["build_index"]
+
+            # Compute per-topic coherence once both the topic model and the
+            # search index are available, then re-save the topic model so the
+            # coherence artifact is persisted to disk.
+            if topic_model is not None and search_engine is not None:
+                embeddings = getattr(search_engine, "_embeddings", None)
+                if (
+                    embeddings is not None
+                    and "topic_id" in df.columns
+                    and len(df) > 0
+                ):
+                    coherence = topic_model.compute_coherence(
+                        np.asarray(embeddings),
+                        df["topic_id"].astype(int).tolist(),
+                    )
+                    logger.info(
+                        "Computed coherence for %d topics", len(coherence)
+                    )
+                    topic_model.save()
 
     if "compute_trends" in requested:
         if df is None or topic_model is None:
