@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-hirenovik-bg: var(--hirenovik-bg);
+  --color-hirenovik-card: var(--hirenovik-card);
+  --color-hirenovik-text: var(--hirenovik-text);
+  --color-hirenovik-text-secondary: var(--hirenovik-text-secondary);
+  --color-hirenovik-accent: var(--hirenovik-accent);
+  --color-hirenovik-link: var(--hirenovik-link);
+  --color-hirenovik-border: var(--hirenovik-border);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+:root {
+  --hirenovik-bg: #020617;
+  --hirenovik-card: #0f172a;
+  --hirenovik-text: #f1f5f9;
+  --hirenovik-text-secondary: #94a3b8;
+  --hirenovik-accent: #34d399;
+  --hirenovik-link: #0ea5e9;
+  --hirenovik-border: #1e293b;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --hirenovik-bg: #f8fafc;
+    --hirenovik-card: #ffffff;
+    --hirenovik-text: #0f172a;
+    --hirenovik-text-secondary: #64748b;
+    --hirenovik-accent: #059669;
+    --hirenovik-link: #0284c7;
+    --hirenovik-border: #e2e8f0;
+  }
+}
+
+body {
+  background: var(--hirenovik-bg);
+  color: var(--hirenovik-text);
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+}
