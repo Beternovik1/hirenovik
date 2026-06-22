@@ -1,5 +1,4 @@
 import { fetchJob, fetchSearch, formatSalary, formatDate } from "@/lib/api";
-import JobCard from "@/components/JobCard";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -32,10 +31,9 @@ export default async function JobDetailPage({ params }) {
 
   // Find similar jobs via semantic search on the job title.
   const searchData = await fetchSearch(job.title || "", 5);
-  const similar =
-    (searchData?.results || searchData?.jobs || searchData?.items || []).filter(
-      (s) => String(s.id) !== String(id)
-    );
+  const similar = (searchData?.results || []).filter(
+    (r) => String(r.job_id ?? r.id) !== String(id)
+  );
 
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency);
 
@@ -99,10 +97,27 @@ export default async function JobDetailPage({ params }) {
             No similar jobs found.
           </p>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {similar.map((s) => (
-              <JobCard key={s.id} job={s} />
-            ))}
+          <div className="space-y-2">
+            {similar.map((r) => {
+              const jobId = r.job_id ?? r.id;
+              const pct = r.score != null
+                ? `${Math.round(Number(r.score) * 100)}%`
+                : null;
+              return (
+                <Link
+                  key={jobId}
+                  href={`/jobs/${jobId}`}
+                  className="flex items-center justify-between bg-hirenovik-card rounded-lg p-4 border border-hirenovik-border hover:border-hirenovik-link transition-colors"
+                >
+                  <span className="text-hirenovik-text font-medium">
+                    Job #{jobId}
+                  </span>
+                  <span className="text-hirenovik-accent text-sm font-mono">
+                    {pct ?? "—"}
+                  </span>
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>

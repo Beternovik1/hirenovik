@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { fetchSearch, fetchExpand } from "@/lib/api";
-import JobCard from "@/components/JobCard";
+import Link from "next/link";
 
 export default function SearchPage() {
   const [query, setQuery] = useState("");
@@ -102,30 +102,11 @@ export default function SearchPage() {
       {expandInfo && (
         <section className="bg-hirenovik-card rounded-lg p-6 border border-hirenovik-border">
           <h2 className="text-lg font-semibold text-hirenovik-text mb-2">
-            Expanded concept
+            Query expansion result
           </h2>
-          {expandInfo.keywords && expandInfo.keywords.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              {expandInfo.keywords.map((kw) => (
-                <span
-                  key={kw}
-                  className="bg-emerald-900/30 text-emerald-300 border border-emerald-800 rounded-full px-2 py-0.5 text-xs"
-                >
-                  {kw}
-                </span>
-              ))}
-            </div>
-          )}
-          {expandInfo.coherence !== undefined && (
-            <p className="text-sm text-hirenovik-text-secondary">
-              Coherence: {Math.round(Number(expandInfo.coherence) * 100)}%
-            </p>
-          )}
-          {expandInfo.rounds && (
-            <p className="text-sm text-hirenovik-text-secondary mt-1">
-              Iterations: {expandInfo.rounds}
-            </p>
-          )}
+          <p className="text-sm text-hirenovik-text-secondary">
+            Ran {expandInfo.rounds ?? "?"} expansion rounds from seed &ldquo;{expandInfo.seed_text ?? query}&rdquo; — found {expandInfo.count ?? expandInfo.results?.length ?? 0} results.
+          </p>
         </section>
       )}
 
@@ -153,18 +134,26 @@ export default function SearchPage() {
           <h2 className="text-lg font-semibold text-hirenovik-text mb-4">
             {jobs.length} results
           </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {jobs.map((j) => {
-              const score = j.score ?? j.similarity;
+          <div className="space-y-2">
+            {jobs.map((r) => {
+              const jobId = r.job_id ?? r.id;
+              const score = r.score;
+              const pct = score !== undefined && score !== null
+                ? `${Math.round(Number(score) * 100)}%`
+                : null;
               return (
-                <div key={j.id} className="relative">
-                  <JobCard job={j} />
-                  {score !== undefined && (
-                    <span className="absolute top-3 right-3 text-xs bg-hirenovik-bg/80 text-hirenovik-accent border border-hirenovik-border rounded px-2 py-0.5">
-                      {Math.round(Number(score) * 100)}% match
-                    </span>
-                  )}
-                </div>
+                <Link
+                  key={jobId}
+                  href={`/jobs/${jobId}`}
+                  className="flex items-center justify-between bg-hirenovik-card rounded-lg p-4 border border-hirenovik-border hover:border-hirenovik-link transition-colors"
+                >
+                  <span className="text-hirenovik-text font-medium">
+                    Job #{jobId}
+                  </span>
+                  <span className="text-hirenovik-accent text-sm font-mono">
+                    {pct ?? "—"}
+                  </span>
+                </Link>
               );
             })}
           </div>

@@ -94,11 +94,11 @@ export function fetchTrends(topicId) {
 // --- POST endpoints ---
 
 export function fetchSearch(text, k = 10) {
-  return postJSON("/search", { text, k });
+  return postJSON("/search", { query: text, k });
 }
 
 export function fetchExpand(seed, rounds = 3) {
-  return postJSON("/topics/expand", { seed_concept: seed, rounds });
+  return postJSON("/topics/expand", { seed_text: seed, rounds });
 }
 
 export function fetchPredict(skills) {

@@ -68,12 +68,17 @@ export default function TrendsPage() {
     };
   }, [selected]);
 
-  const weekly = trends?.weekly || trends?.trends || trends?.items || [];
-  const isTrending = trends?.trending ?? false;
+  const allItems = trends?.items || [];
+  // Filter client-side: backend returns all topics, we show only selected.
+  const weekly = allItems.filter(
+    (t) => String(t.topic_id) === String(selected)
+  );
+  const trendingIds = new Set(trends?.trending_topic_ids || []);
+  const isTrending = trendingIds.has(Number(selected));
 
   const chartData = weekly.map((t, i) => ({
-    name: t.week || t.date || `W${i + 1}`,
-    frequency: t.frequency ?? t.count ?? t.jobs ?? 0,
+    name: t.week || `W${i + 1}`,
+    frequency: t.count ?? 0,
     avgSalary: t.avg_salary != null ? Math.round(Number(t.avg_salary)) : null,
   }));
 
