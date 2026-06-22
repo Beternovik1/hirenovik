@@ -25,6 +25,9 @@ DEFAULT_INDEX_PATH = "src/nlp/models/faiss_index.bin"
 #: Default on-disk path for the index-to-job_id mapping JSON.
 DEFAULT_ID_MAPPING_PATH = "src/nlp/models/id_mapping.json"
 
+#: Default on-disk path for the raw embedding matrix (float32 .npy).
+DEFAULT_EMBEDDINGS_PATH = "src/nlp/models/embeddings.npy"
+
 
 def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
     """Return an L2-normalized copy of ``matrix`` along axis 1."""
@@ -45,6 +48,7 @@ class SearchEngine:
 
     DEFAULT_INDEX_PATH = DEFAULT_INDEX_PATH
     DEFAULT_ID_MAPPING_PATH = DEFAULT_ID_MAPPING_PATH
+    DEFAULT_EMBEDDINGS_PATH = DEFAULT_EMBEDDINGS_PATH
 
     def __init__(
         self,
@@ -74,6 +78,25 @@ class SearchEngine:
         """
         if len(documents) != len(doc_ids):
             raise ValueError("documents and doc_ids must have the same length")
+
+        # Deduplicate by job_id keeping the first occurrence so the same
+        # document cannot appear multiple times in the index (which would
+        # otherwise produce identical scores for different returned rows).
+        unique: dict[int, tuple[str, int]] = {}
+        order: list[int] = []
+        for doc, jid in zip(documents, doc_ids):
+            jid_int = int(jid)
+            if jid_int in unique:
+                continue
+            unique[jid_int] = (doc, jid_int)
+            order.append(jid_int)
+        removed_count = len(doc_ids) - len(order)
+        if removed_count > 0:
+            logger.warning(
+                "Deduplicated %d duplicate job_ids from index", removed_count
+            )
+        documents = [unique[jid][0] for jid in order]
+        doc_ids = [unique[jid][1] for jid in order]
 
         import faiss
 
@@ -223,7 +246,7 @@ class SearchEngine:
         return results
 
     def save(self) -> None:
-        """Persist the FAISS index and id mapping to disk."""
+        """Persist the FAISS index, id mapping, and embeddings to disk."""
         import faiss
 
         if self._index is None:
@@ -233,6 +256,8 @@ class SearchEngine:
         faiss.write_index(self._index, self.index_path)
         with open(self.id_mapping_path, "w", encoding="utf-8") as fh:
             json.dump(self._id_mapping, fh)
+        if self._embeddings is not None:
+            np.save(self.DEFAULT_EMBEDDINGS_PATH, self._embeddings)
         logger.info("Saved FAISS index to %s", self.index_path)
 
     @classmethod
@@ -262,6 +287,12 @@ class SearchEngine:
         instance._index = faiss.read_index(index_path)
         with open(id_mapping_path, encoding="utf-8") as fh:
             instance._id_mapping = [int(i) for i in json.load(fh)]
+        # Load the raw embedding matrix if it was saved alongside the index.
+        if os.path.exists(cls.DEFAULT_EMBEDDINGS_PATH):
+            try:
+                instance._embeddings = np.load(cls.DEFAULT_EMBEDDINGS_PATH)
+            except (OSError, ValueError):
+                instance._embeddings = None
         return instance
 
 
@@ -269,4 +300,5 @@ __all__: list[str] = [
     "SearchEngine",
     "DEFAULT_INDEX_PATH",
     "DEFAULT_ID_MAPPING_PATH",
+    "DEFAULT_EMBEDDINGS_PATH",
 ]

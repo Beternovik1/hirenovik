@@ -69,6 +69,38 @@ class TestCleanText:
         result = cleaner.clean_text("Título con acentos y ñ incorporados")
         assert "Título" in result and "ñ" in result
 
+    def test_clean_text_removes_please_click_here(self) -> None:
+        cleaner = TextPreprocessor()
+        result = cleaner.clean_text("please click here to apply now")
+        # The phrase is removed; surrounding words remain.
+        assert "please click here" not in result
+        assert "apply" in result
+
+    def test_clean_text_removes_click_here(self) -> None:
+        cleaner = TextPreprocessor()
+        result = cleaner.clean_text("click here for more info")
+        assert "click here" not in result
+
+    def test_clean_text_removes_ntt_noise(self) -> None:
+        cleaner = TextPreprocessor()
+        result = cleaner.clean_text("ntt ntt data is hiring")
+        assert "ntt ntt" not in result
+        assert "ntt data" not in result
+        assert "hiring" in result
+
+    def test_clean_text_removes_ntt_data(self) -> None:
+        cleaner = TextPreprocessor()
+        result = cleaner.clean_text("ntt data engineers wanted")
+        assert "ntt data" not in result
+
+    def test_clean_text_removes_repeated_adjacent_words(self) -> None:
+        cleaner = TextPreprocessor()
+        result = cleaner.clean_text("python python is great great")
+        # Each adjacent duplicate is collapsed to a single occurrence.
+        words = result.split()
+        assert words.count("python") == 1
+        assert words.count("great") == 1
+
 
 class TestCleanDataframe:
     def _make_df(self, descriptions: list[str]) -> pd.DataFrame:
@@ -136,12 +168,12 @@ class TestLoadDescriptions:
         mock_session.__exit__.return_value = False
         mock_session_cls.return_value = mock_session
         rows = [
-            {"id": 1, "description": "desc one", "career": "DE", "date_scraped": None}
+            {"id": 1, "description": "desc one", "career": "DE", "date_scraped": None, "salary_min": None, "salary_max": None}
         ]
         mock_session.execute.return_value.mappings.return_value.all.return_value = rows
         cleaner = TextPreprocessor()
         df = cleaner.load_descriptions()
-        assert list(df.columns) == ["id", "description", "career", "date_scraped"]
+        assert list(df.columns) == ["id", "description", "career", "date_scraped", "salary_min", "salary_max"]
         assert len(df) == 1
         mock_session.execute.assert_called_once()
         mock_engine.dispose.assert_called_once()
@@ -163,6 +195,8 @@ class TestLoadDescriptions:
                 "description": "<p>This description is long enough to pass the filter</p>",
                 "career": "DE",
                 "date_scraped": None,
+                "salary_min": None,
+                "salary_max": None,
             }
         ]
         mock_session.execute.return_value.mappings.return_value.all.return_value = rows

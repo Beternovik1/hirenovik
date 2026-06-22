@@ -13,6 +13,7 @@ class TopicResponse(BaseModel):
     topic_id: int
     count: int
     name: str
+    coherence: Optional[float] = None
 
 
 class TopicDetailResponse(BaseModel):
@@ -24,8 +25,24 @@ class TopicDetailResponse(BaseModel):
     keywords: list[str]
 
 
+class TopicExampleJob(BaseModel):
+    """A representative job for a topic."""
+
+    job_id: int
+    title: str
+    score: float  # cosine similarity to topic centroid
+
+
+class TopicExamplesResponse(BaseModel):
+    """List of representative jobs for a topic."""
+
+    topic_id: int
+    examples: list[TopicExampleJob]
+
+
 class TopicListResponse(BaseModel):
     """Paginated list of topics."""
 
     items: list[TopicResponse]
     total: int
+    size_distribution: Optional[dict] = None
