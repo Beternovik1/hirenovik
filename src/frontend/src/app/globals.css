@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-hirenovik-bg: var(--hirenovik-bg);
+  --color-hirenovik-card: var(--hirenovik-card);
+  --color-hirenovik-text: var(--hirenovik-text);
+  --color-hirenovik-text-secondary: var(--hirenovik-text-secondary);
+  --color-hirenovik-accent: var(--hirenovik-accent);
+  --color-hirenovik-link: var(--hirenovik-link);
+  --color-hirenovik-border: var(--hirenovik-border);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Default: dark theme */
+:root {
+  --hirenovik-bg: #020617;
+  --hirenovik-card: #0f172a;
+  --hirenovik-text: #f1f5f9;
+  --hirenovik-text-secondary: #94a3b8;
+  --hirenovik-accent: #34d399;
+  --hirenovik-link: #0ea5e9;
+  --hirenovik-border: #1e293b;
+}
+
+/* Light theme — applied via html.light class or system preference fallback */
+:root.light,
+html.light {
+  --hirenovik-bg: #f8fafc;
+  --hirenovik-card: #ffffff;
+  --hirenovik-text: #0f172a;
+  --hirenovik-text-secondary: #64748b;
+  --hirenovik-accent: #059669;
+  --hirenovik-link: #0284c7;
+  --hirenovik-border: #e2e8f0;
+}
+
+/* Transition only the properties that change — avoids jank on first load
+   but feels smooth when toggling manually. */
+html.theme-ready,
+html.theme-ready *,
+html.theme-ready *::before,
+html.theme-ready *::after {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease !important;
+}
+
+body {
+  background: var(--hirenovik-bg);
+  color: var(--hirenovik-text);
+  font-family: var(--font-sans, Arial, Helvetica, sans-serif);
+}
+
+/* Sun/Moon toggle button — no background, minimal */
+.theme-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--hirenovik-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.theme-toggle:hover {
+  color: var(--hirenovik-text);
+  background: var(--hirenovik-border);
+}
