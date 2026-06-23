@@ -5,11 +5,18 @@ LinkedIn in preparation for embedding and topic modeling. The cleaning
 pipeline strips HTML tags, markdown, URLs, bullet points, special
 characters, and normalizes whitespace so the remaining text is suitable
 for embedding with multilingual sentence-transformers.
+
+Language-aware deep cleaning (:meth:`clean_text_deep`) applies
+language-specific processing after the universal clean step: English
+documents are lemmatized and negation-prefixed (mirroring the VADER
+preprocessing path) while Spanish documents are left intact for
+transformer-based downstream processing.
 """
 
+import importlib.util
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -17,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from src.database.models import Job, db_connect
+from src.nlp.language import detect_languages
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +58,16 @@ _GARBAGE_PATTERNS = [
     (re.compile(r"\b(\w+)\s+\1\b"), r"\1"),  # repeated adjacent words
 ]
 
+#: English negation tokens that trigger NEG_ prefix on the following
+#: three tokens (mirrors the semantic-cluster VADER path).
+_EN_NEGATION_TOKENS = {
+    "not", "never", "no", "neither", "nor",
+    "without", "hardly", "barely", "scarcely",
+}
+
+#: Number of tokens to prefix with NEG_ after a negation token.
+NEGATION_WINDOW = 3
+
 
 class TextPreprocessor:
     """Load job descriptions from Supabase and clean them for NLP.
@@ -63,6 +81,9 @@ class TextPreprocessor:
 
     def __init__(self, min_description_length: int = 50) -> None:
         self.min_description_length = min_description_length
+        self._nlp_en = None
+        self._en_stopwords = None
+        self._negation_set = set(_EN_NEGATION_TOKENS)
 
     def load_descriptions(self) -> pd.DataFrame:
         """Fetch job descriptions from Supabase.
@@ -163,14 +184,143 @@ class TextPreprocessor:
         return filtered
 
     def load_and_clean(self) -> pd.DataFrame:
-        """Convenience wrapper: load descriptions then clean them.
+        """Convenience wrapper: load descriptions then deep-clean them.
 
         Returns:
-            Cleaned DataFrame as produced by :meth:`clean_dataframe`
+            Cleaned DataFrame as produced by :meth:`clean_dataframe_deep`
             applied to :meth:`load_descriptions`.
         """
         raw = self.load_descriptions()
-        return self.clean_dataframe(raw)
+        return self.clean_dataframe_deep(raw)
+
+    # ── Language-aware deep cleaning ────────────────────────────────
+
+    def _load_en_nlp(self) -> None:
+        """Lazy-load the English spaCy model and NLTK stopwords."""
+        if self._nlp_en is not None:
+            return
+
+        if importlib.util.find_spec("spacy") is None:
+            logger.warning("spaCy not installed — English deep cleaning disabled.")
+            return
+
+        import spacy
+
+        try:
+            self._nlp_en = spacy.load("en_core_web_sm")
+        except Exception:
+            logger.warning("en_core_web_sm not available — English deep cleaning disabled.")
+            self._nlp_en = None
+
+        if importlib.util.find_spec("nltk") is not None:
+            try:
+                from nltk.corpus import stopwords as nltk_stopwords
+
+                self._en_stopwords = set(nltk_stopwords.words("english"))
+            except Exception:
+                logger.warning("NLTK English stopwords not available.")
+                self._en_stopwords = set()
+
+    def clean_text_deep(self, text: str, lang: str) -> str:
+        """Apply language-specific processing after universal cleaning.
+
+        For English: spaCy lemmatization, NLTK stopword removal, and
+        NEG_ prefix on the 3 tokens following each negation word (this
+        mirrors the semantic-cluster VADER path without actually
+        running sentiment analysis). For Spanish: the universally
+        cleaned text is returned as-is because transformers handle
+        morphology natively. For unknown languages: text is returned
+        as-is.
+
+        Args:
+            text: Universally cleaned text string.
+            lang: Language code (``"en"`` or ``"es"``).
+
+        Returns:
+            Deep-cleaned text string.
+        """
+        if not text or not text.strip():
+            return ""
+
+        if lang != "en":
+            # Spanish and unknown: return text as-is after universal clean.
+            return text
+
+        # English VADER-style path.
+        self._load_en_nlp()
+        if self._nlp_en is None:
+            return text
+
+        doc = self._nlp_en(text)
+        stop = self._en_stopwords or set()
+
+        lemmas: list[str] = []
+        for token in doc:
+            if token.text in self._negation_set:
+                lemmas.append(token.text)
+            elif token.text not in stop:
+                lemmas.append(token.lemma_)
+
+        # NEG_ prefix: mark the tokens after each negation token.
+        negated: list[str] = []
+        i = 0
+        while i < len(lemmas):
+            if lemmas[i] in self._negation_set:
+                negated.append(lemmas[i])
+                for _ in range(NEGATION_WINDOW):
+                    i += 1
+                    if i < len(lemmas):
+                        negated.append(f"NEG_{lemmas[i]}")
+            else:
+                negated.append(lemmas[i])
+            i += 1
+
+        return " ".join(negated)
+
+    def clean_dataframe_deep(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply universal + language-aware deep cleaning to a DataFrame.
+
+        Detects the language of each row, applies :meth:`clean_text`
+        (universal) then :meth:`clean_text_deep` (language-specific),
+        and returns a new DataFrame with ``cleaned_description`` and
+        ``lang`` columns.
+
+        Args:
+            df: DataFrame with a ``description`` column.
+
+        Returns:
+            Copy of ``df`` with ``cleaned_description`` and ``lang``
+            columns, rows shorter than the minimum length removed.
+        """
+        result = df.copy()
+        # Universal cleaning first.
+        result["cleaned_description"] = (
+            result["description"].apply(lambda value: self.clean_text(value)).astype(str)
+        )
+
+        # Detect language on the universally-cleaned text.
+        result["lang"] = detect_languages(result, text_column="cleaned_description")
+
+        # Apply deep cleaning per row based on detected language.
+        result["cleaned_description"] = result.apply(
+            lambda row: self.clean_text_deep(row["cleaned_description"], row["lang"]),
+            axis=1,
+        )
+
+        mask = result["cleaned_description"].str.len() >= self.min_description_length
+        filtered = result.loc[mask].reset_index(drop=True)
+
+        es_count = int((filtered["lang"] == "es").sum())
+        en_count = int((filtered["lang"] == "en").sum())
+        logger.info(
+            "Deep-cleaned %d descriptions, kept %d after length filter "
+            "(ES: %d, EN: %d).",
+            len(df),
+            len(filtered),
+            es_count,
+            en_count,
+        )
+        return filtered
 
 
 __all__: list[Any] = ["TextPreprocessor", "Job"]
