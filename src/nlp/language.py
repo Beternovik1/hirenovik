@@ -5,7 +5,7 @@ stopword corpus names, lemmatization flags, negation tokens, and
 sentiment backends) plus lightweight language detection utilities
 that route documents to the appropriate preprocessing path.
 
-Language detection prefers ``langdetect`` when available and falls
+Language detection prefers ``fasttext`` when available and falls
 back to a stopword-count heuristic so the module degrades gracefully
 in minimal installations.
 """
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 from typing import Any
 
 import pandas as pd
@@ -100,30 +101,64 @@ class LanguageConfig:
         )
 
 
-def _detect_with_langdetect(text: str) -> str | None:
-    """Detect language using langdetect, returning None on failure.
+#: Path to the pretrained fasttext language identification model.
+_FASTTEXT_MODEL_PATH = "src/nlp/models/lid.176.bin"
+
+_ft_model: Any = None
+
+
+def _load_fasttext() -> Any:
+    """Lazy-load the fasttext model, returning None on failure."""
+    global _ft_model
+    if _ft_model is not None:
+        return _ft_model
+    if importlib.util.find_spec("fasttext") is None:
+        logger.warning("fasttext not installed — language detection disabled.")
+        return None
+    if not os.path.exists(_FASTTEXT_MODEL_PATH):
+        logger.warning(
+            "fasttext model not found at %s — using heuristic fallback.",
+            _FASTTEXT_MODEL_PATH,
+        )
+        return None
+    import fasttext
+    try:
+        _ft_model = fasttext.load_model(_FASTTEXT_MODEL_PATH)
+        logger.info("Loaded fasttext language ID model (%s).", _FASTTEXT_MODEL_PATH)
+        return _ft_model
+    except Exception as exc:
+        logger.warning("Failed to load fasttext model: %s", exc)
+        return None
+
+
+def _detect_with_fasttext(text: str) -> str | None:
+    """Detect language using fasttext, returning None on failure.
+
+    fasttext is more accurate than langdetect for code-mixed texts
+    (Spanish structure with English tech terms) because it uses
+    subword embeddings rather than character n-grams alone.
 
     Args:
         text: Input text to classify.
 
     Returns:
-        ``"es"`` or ``"en"`` if detected, ``None`` if langdetect is
+        ``"es"`` or ``"en"`` if detected, ``None`` if fasttext is
         unavailable or cannot classify.
     """
-    if importlib.util.find_spec("langdetect") is None:
+    model = _load_fasttext()
+    if model is None:
         return None
     try:
-        from langdetect import DetectorFactory, detect
-
-        DetectorFactory.seed = 0
-        result = detect(text)
-        if result.startswith("es"):
+        # fasttext predict returns (labels, scores).
+        labels, _ = model.predict(text.replace("\n", " "), k=1)
+        label = labels[0].replace("__label__", "")
+        if label.startswith("es"):
             return "es"
-        if result.startswith("en"):
+        if label.startswith("en"):
             return "en"
         return None
     except Exception:
-        logger.debug("langdetect failed for text preview: %s", text[:80])
+        logger.debug("fasttext failed for text preview: %s", text[:80])
         return None
 
 
@@ -150,8 +185,12 @@ def _detect_heuristic(text: str) -> str:
 def detect_language(text: str) -> str:
     """Detect the language of a single text.
 
-    Uses ``langdetect`` when available, falling back to a stopword
+    Uses ``fasttext`` when available, falling back to a stopword
     counting heuristic when it is not installed or fails.
+
+    fasttext uses subword embeddings rather than character n-grams,
+    making it more accurate for code-mixed texts common in bilingual
+    job postings.
 
     Args:
         text: Input string.
@@ -162,11 +201,11 @@ def detect_language(text: str) -> str:
     if not isinstance(text, str) or not text.strip():
         return DEFAULT_LANGUAGE
 
-    result = _detect_with_langdetect(text)
+    result = _detect_with_fasttext(text)
     if result is not None:
         return result
 
-    logger.debug("langdetect unavailable or failed; using heuristic.")
+    logger.debug("fasttext unavailable or failed; using heuristic.")
     return _detect_heuristic(text)
 
 
