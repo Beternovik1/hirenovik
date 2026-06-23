@@ -58,17 +58,6 @@ _GARBAGE_PATTERNS = [
     (re.compile(r"\b(\w+)\s+\1\b"), r"\1"),  # repeated adjacent words
 ]
 
-#: English negation tokens that trigger NEG_ prefix on the following
-#: three tokens (mirrors the semantic-cluster VADER path).
-_EN_NEGATION_TOKENS = {
-    "not", "never", "no", "neither", "nor",
-    "without", "hardly", "barely", "scarcely",
-}
-
-#: Number of tokens to prefix with NEG_ after a negation token.
-NEGATION_WINDOW = 3
-
-
 class TextPreprocessor:
     """Load job descriptions from Supabase and clean them for NLP.
 
@@ -83,7 +72,6 @@ class TextPreprocessor:
         self.min_description_length = min_description_length
         self._nlp_en = None
         self._en_stopwords = None
-        self._negation_set = set(_EN_NEGATION_TOKENS)
 
     def load_descriptions(self) -> pd.DataFrame:
         """Fetch job descriptions from Supabase.
@@ -224,13 +212,13 @@ class TextPreprocessor:
     def clean_text_deep(self, text: str, lang: str) -> str:
         """Apply language-specific processing after universal cleaning.
 
-        For English: spaCy lemmatization, NLTK stopword removal, and
-        NEG_ prefix on the 3 tokens following each negation word (this
-        mirrors the semantic-cluster VADER path without actually
-        running sentiment analysis). For Spanish: the universally
-        cleaned text is returned as-is because transformers handle
-        morphology natively. For unknown languages: text is returned
-        as-is.
+        For English: spaCy lemmatization and NLTK stopword removal.
+        NEG_ prefixing is deliberately NOT applied — it is a
+        sentiment-analysis technique (VADER path) that produces
+        garbage keywords like ``NEG_experience`` in topic modeling.
+        For Spanish and unknown languages: text is returned as-is
+        because the multilingual transformer handles morphology
+        and function words natively.
 
         Args:
             text: Universally cleaned text string.
@@ -246,7 +234,8 @@ class TextPreprocessor:
             # Spanish and unknown: return text as-is after universal clean.
             return text
 
-        # English VADER-style path.
+        # English: lemmatize + strip stopwords (no NEG_ prefix — job
+        # postings are not sentiment data).
         self._load_en_nlp()
         if self._nlp_en is None:
             return text
@@ -256,26 +245,10 @@ class TextPreprocessor:
 
         lemmas: list[str] = []
         for token in doc:
-            if token.text in self._negation_set:
-                lemmas.append(token.text)
-            elif token.text not in stop:
+            if token.text not in stop:
                 lemmas.append(token.lemma_)
 
-        # NEG_ prefix: mark the tokens after each negation token.
-        negated: list[str] = []
-        i = 0
-        while i < len(lemmas):
-            if lemmas[i] in self._negation_set:
-                negated.append(lemmas[i])
-                for _ in range(NEGATION_WINDOW):
-                    i += 1
-                    if i < len(lemmas):
-                        negated.append(f"NEG_{lemmas[i]}")
-            else:
-                negated.append(lemmas[i])
-            i += 1
-
-        return " ".join(negated)
+        return " ".join(lemmas)
 
     def clean_dataframe_deep(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply universal + language-aware deep cleaning to a DataFrame.
