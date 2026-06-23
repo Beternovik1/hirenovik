@@ -24,6 +24,9 @@ def mock_topic_deps():
     """Inject stub modules for bertopic/umap/hdbscan into sys.modules."""
     fake_bertopic = types.ModuleType("bertopic")
     fake_bertopic.BERTopic = MagicMock()
+    fake_bertopic_rep = types.ModuleType("bertopic.representation")
+    fake_bertopic_rep.MaximalMarginalRelevance = MagicMock()
+    fake_bertopic.representation = fake_bertopic_rep
     fake_umap = types.ModuleType("umap")
     fake_umap.UMAP = MagicMock()
     fake_hdbscan = types.ModuleType("hdbscan")
@@ -33,10 +36,12 @@ def mock_topic_deps():
 
     saved = {
         "bertopic": sys.modules.get("bertopic"),
+        "bertopic.representation": sys.modules.get("bertopic.representation"),
         "umap": sys.modules.get("umap"),
         "hdbscan": sys.modules.get("hdbscan"),
     }
     sys.modules["bertopic"] = fake_bertopic
+    sys.modules["bertopic.representation"] = fake_bertopic_rep
     sys.modules["umap"] = fake_umap
     sys.modules["hdbscan"] = fake_hdbscan
     yield fake_bertopic, fake_umap, fake_hdbscan
@@ -338,9 +343,9 @@ class TestGetTopicDocs:
 
 
 class TestInitDefaults:
-    def test_default_min_topic_size_is_30(self, embedder) -> None:
+    def test_default_min_topic_size_is_20(self, embedder) -> None:
         topic_model = TopicModel(embedder=embedder)
-        assert topic_model.min_topic_size == 30
+        assert topic_model.min_topic_size == 20
 
     def test_init_initializes_coherence_and_docs(self, embedder) -> None:
         topic_model = TopicModel(embedder=embedder)

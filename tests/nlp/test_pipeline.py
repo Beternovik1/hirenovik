@@ -42,6 +42,9 @@ def mocks(fake_df):
         "_run_embed": MagicMock(
             return_value=(fake_embedder, fake_embeddings, fake_documents)
         ),
+        "_run_detect_outliers": MagicMock(
+            return_value=(fake_df, fake_df.head(0), fake_embeddings)
+        ),
         "_run_topic_model": MagicMock(return_value=fake_topic_model),
         "_run_build_index": MagicMock(return_value=fake_search_engine),
         "_run_compute_trends": MagicMock(return_value=fake_trends_df),
@@ -72,6 +75,7 @@ class TestRunPipelineAllSteps:
         assert set(result["steps_run"]) == set(nlp_pipeline.DEFAULT_STEPS)
         mocks["targets"]["_run_preprocess"].assert_called_once()
         mocks["targets"]["_run_embed"].assert_called_once()
+        mocks["targets"]["_run_detect_outliers"].assert_called_once()
         mocks["targets"]["_run_topic_model"].assert_called_once()
         mocks["targets"]["_run_build_index"].assert_called_once()
         mocks["targets"]["_run_compute_trends"].assert_called_once()
@@ -83,11 +87,14 @@ class TestRunPipelineAllSteps:
         result = nlp_pipeline.run_pipeline(steps=["preprocess", "embed"])
         assert "preprocess" in result["steps_run"]
         assert "embed" in result["steps_run"]
-        # Topic-model/index/trends should be skipped, not executed.
+        # Outlier detection, topic-model, index, and trends should be skipped.
+        mocks["targets"]["_run_detect_outliers"].assert_not_called()
         mocks["targets"]["_run_topic_model"].assert_not_called()
         mocks["targets"]["_run_build_index"].assert_not_called()
         mocks["targets"]["_run_compute_trends"].assert_not_called()
-        assert set(result["skipped"]) == {"topic_model", "build_index", "compute_trends"}
+        assert set(result["skipped"]) == {
+            "detect_outliers", "topic_model", "build_index", "compute_trends"
+        }
 
     def test_run_pipeline_subset_skips_dep_missing(self, mocks) -> None:
         # If we request only topic_model (skipping prerequisites), it must skip.
@@ -135,6 +142,10 @@ class TestEmptyDescriptions:
                 patch(
                     "src.nlp.pipeline._run_embed",
                     return_value=(MagicMock(), np.empty((0, 0)), []),
+                ), \
+                patch(
+                    "src.nlp.pipeline._run_detect_outliers",
+                    return_value=(empty_df, empty_df, np.empty((0, 0))),
                 ), \
                 patch("src.nlp.pipeline._run_topic_model") as mock_topic, \
                 patch("src.nlp.pipeline._run_build_index") as mock_index, \

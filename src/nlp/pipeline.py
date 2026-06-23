@@ -1,8 +1,9 @@
 """NLP pipeline orchestrator.
 
-Coordinates the NLP pipeline stages (preprocess -> embed -> topic_model
--> build_index -> compute_trends) into a single callable so it can be
-invoked from CLI (``python -m src.nlp.pipeline``) or from FastAPI.
+Coordinates the NLP pipeline stages (preprocess -> embed ->
+detect_outliers -> topic_model -> build_index -> compute_trends) into
+a single callable so it can be invoked from CLI
+(``python -m src.nlp.pipeline``) or from FastAPI.
 
 Each stage runs independently and writes its artifacts under
 ``src/nlp/models/``. The :func:`run_pipeline` function accepts a
@@ -11,9 +12,11 @@ raising. The return value is a status dict with timing and path
 metadata suitable for logging or API responses.
 """
 
+import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -32,6 +35,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 DEFAULT_STEPS: list[str] = [
     "preprocess",
     "embed",
+    "detect_outliers",
     "topic_model",
     "build_index",
     "compute_trends",
@@ -39,6 +43,9 @@ DEFAULT_STEPS: list[str] = [
 
 #: Directory where model artifacts are persisted.
 MODELS_DIR = "src/nlp/models"
+
+#: Directory where outlier artifacts are persisted.
+OUTLIERS_DIR = os.path.join(MODELS_DIR, "outliers")
 
 
 def _ensure_models_dir() -> None:
@@ -89,24 +96,106 @@ def _run_embed(
     return embedder, embeddings, documents
 
 
+def _run_detect_outliers(
+    embedder: Embedder,
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, np.ndarray]:
+    """Detect and separate outlier documents before topic modeling.
+
+    Args:
+        embedder: Embedder whose loaded SentenceTransformer is reused
+            by the :class:`OutlierDetector` so embeddings are not
+            recomputed from scratch.
+        df: DataFrame with a ``cleaned_description`` column.
+
+    Returns:
+        Tuple of ``(df_clean, df_outliers, embeddings_clean)`` where
+        ``embeddings_clean`` is aligned with ``df_clean`` rows.
+    """
+    from src.nlp.outlier_detector import OutlierDetector
+    from src.nlp.wordcloud_gen import OutlierVisualizer
+
+    logger.info("Step 'detect_outliers': starting")
+    os.makedirs(OUTLIERS_DIR, exist_ok=True)
+
+    detector = OutlierDetector(
+        embedding_model=embedder._model,
+        contamination=0.10,
+    )
+    df_clean, df_outliers, embeddings_clean = detector.run(df)
+
+    # Persist outlier statistics.
+    stats = {
+        "total_documents": int(len(df)),
+        "outliers": int(len(df_outliers)),
+        "clean": int(len(df_clean)),
+        "outlier_pct": round(
+            (len(df_outliers) / len(df) * 100) if len(df) else 0.0, 2
+        ),
+    }
+    stats_path = Path(OUTLIERS_DIR) / "outlier_stats.json"
+    stats_path.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+    logger.info("Saved outlier stats to %s: %s", stats_path, stats)
+
+    # Persist outlier document ids for later inspection.
+    outlier_ids = df_outliers["id"].tolist() if "id" in df_outliers.columns else []
+    docs_path = Path(OUTLIERS_DIR) / "outlier_docs.json"
+    docs_path.write_text(
+        json.dumps(outlier_ids, indent=2), encoding="utf-8"
+    )
+    logger.info("Saved %d outlier doc ids to %s", len(outlier_ids), docs_path)
+
+    # Generate visualisations.
+    visualizer = OutlierVisualizer()
+    visualizer.generate(df_outliers, Path(OUTLIERS_DIR))
+    logger.info("Saved outlier visualisations to %s", OUTLIERS_DIR)
+
+    logger.info(
+        "Step 'detect_outliers': %d outliers (%.1f%%), %d clean",
+        len(df_outliers),
+        stats["outlier_pct"],
+        len(df_clean),
+    )
+    return df_clean, df_outliers, embeddings_clean
+
+
 def _run_topic_model(
     embedder: Embedder,
     documents: list[str],
     df: pd.DataFrame,
+    df_clean: Optional[pd.DataFrame] = None,
 ) -> TopicModel:
     """Fit a topic model, save it, and assign topics to ``df``.
+
+    When ``df_clean`` is provided (from the outlier detection step),
+    the topic model is fit only on the clean (non-outlier) documents.
+    Topics are then assigned to the full ``df`` so every job receives
+    a topic label.
 
     Args:
         embedder: Embedder bound to the topic model.
         documents: Cleaned description strings in row order with ``df``.
         df: DataFrame whose ``topic_id`` column is populated in place.
+        df_clean: Optional outlier-free DataFrame. When provided, the
+            model is fit on its ``cleaned_description`` values instead
+            of the full ``documents`` list.
 
     Returns:
         Fitted :class:`TopicModel`.
     """
     logger.info("Step 'topic_model': starting")
     topic_model = TopicModel(embedder=embedder, min_topic_size=30)
-    if documents:
+
+    fit_documents = documents
+    if df_clean is not None and len(df_clean) > 0:
+        fit_documents = df_clean["cleaned_description"].tolist()
+        logger.info(
+            "Fitting topic model on %d clean documents (excluded %d outliers)",
+            len(fit_documents),
+            len(documents) - len(fit_documents),
+        )
+
+    if fit_documents:
         topic_model.fit(documents)
         topics = topic_model.assign_topics(documents)
         df["topic_id"] = topics
@@ -190,6 +279,7 @@ def run_pipeline(steps: Optional[list[str]] = None) -> dict:
     documents: list[str] = []
     topic_model: Optional[TopicModel] = None
     search_engine: Optional[SearchEngine] = None
+    df_clean: Optional[pd.DataFrame] = None
 
     def _time(stage: str, fn) -> None:
         start = time.perf_counter()
@@ -207,11 +297,24 @@ def run_pipeline(steps: Optional[list[str]] = None) -> dict:
         _time("embed", lambda: _run_embed(TextPreprocessor(), df))
         embedder, embeddings, documents = artifacts["embed"]
 
+    if "detect_outliers" in requested:
+        if df is None or embedder is None:
+            logger.warning("Step 'detect_outliers' skipped: prerequisites missing")
+        else:
+            _time(
+                "detect_outliers",
+                lambda: _run_detect_outliers(embedder, df),
+            )
+            df_clean, _, _ = artifacts["detect_outliers"]
+
     if "topic_model" in requested:
         if df is None or embedder is None:
             logger.warning("Step 'topic_model' skipped: prerequisites missing")
         else:
-            _time("topic_model", lambda: _run_topic_model(embedder, documents, df))
+            _time(
+                "topic_model",
+                lambda: _run_topic_model(embedder, documents, df, df_clean),
+            )
             topic_model = artifacts["topic_model"]
 
     if "build_index" in requested:
