@@ -6,3 +6,21 @@ __pychache__/
 reports/
 *.db
 .env
+
+# Frontend
+src/frontend/node_modules/
+src/frontend/.next/
+src/frontend/.git/
+
+# Pipeline artifacts
+cachedir/
+step_functions/
+notebooks/
+plots/
+*.png
+*.pkl
+*.bin
+
+# Git
+.git/
+.gitignore

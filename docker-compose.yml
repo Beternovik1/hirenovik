@@ -1,10 +1,72 @@
-version: '3.8'
-# docker-compose.yml
+# ============================================================
+# Hirenovik — Production Docker Compose
+# ============================================================
+#
+# NETWORK SEGMENTATION (defense in depth):
+#   Two isolated networks — the frontend can NEVER reach backend-net.
+#   This prevents the most common junior mistake: exposing the
+#   database (or any internal service) to the public-facing frontend.
+#
+#   frontend-net  →  frontend + API        (public zone)
+#   backend-net   →  API only              (private zone — DB, cache, workers)
+#
+#   The API is the ONLY bridge. Even if the frontend container
+#   is compromised, backend-net remains unreachable.
+#
+#   Pattern credit: Senior Data Engineer, fastapi-url-service class.
+
 services:
-  scout_pipeline:
-    build: .
-    # local passwords
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: hirenovik-api
+    ports:
+      - "8000:8000"
     env_file:
       - .env
+    environment:
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:8501
+      - NLP_MODELS_DIR=/app/src/nlp/models
     volumes:
-      - ./reports:/app/reports
+      - nlp_models:/app/src/nlp/models
+    networks:
+      - frontend-net   # Serves the frontend
+      - backend-net    # Talks to the database (and any future internal services)
+    restart: unless-stopped
+    # Health check is defined in Dockerfile.api, compose respects it automatically
+
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile.frontend
+    container_name: hirenovik-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # The frontend only knows about the API — never the database.
+      # Service name "api" resolves via frontend-net DNS.
+      - NEXT_PUBLIC_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    networks:
+      - frontend-net   # Only public zone — ZERO access to backend-net
+    restart: unless-stopped
+    # Health check is defined in Dockerfile.frontend, compose respects it automatically
+
+# -----------------------------------------------------------
+# Two separate networks — the frontend cannot reach backend-net.
+# If a database container, Redis, or worker is added later,
+# put it ONLY on backend-net and it stays invisible to the frontend.
+# -----------------------------------------------------------
+networks:
+  frontend-net:
+    driver: bridge
+  backend-net:
+    driver: bridge
+
+volumes:
+  nlp_models:
+    driver: local
