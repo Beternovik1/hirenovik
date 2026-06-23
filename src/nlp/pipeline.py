@@ -184,7 +184,7 @@ def _run_topic_model(
         Fitted :class:`TopicModel`.
     """
     logger.info("Step 'topic_model': starting")
-    topic_model = TopicModel(embedder=embedder, min_topic_size=30)
+    topic_model = TopicModel(embedder=embedder, min_topic_size=20)
 
     fit_documents = documents
     if df_clean is not None and len(df_clean) > 0:
