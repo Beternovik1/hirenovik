@@ -130,8 +130,8 @@ class TopicModel:
             ngram_range=self.n_gram_range, stop_words=stop_words
         )
         umap_model = UMAP(
-            n_neighbors=10,
-            n_components=3,
+            n_neighbors=15,
+            n_components=5,
             metric="cosine",
             random_state=42,
             low_memory=False,
@@ -140,7 +140,7 @@ class TopicModel:
             min_cluster_size=effective_min,
             min_samples=1,
             metric="euclidean",
-            cluster_selection_method="eom",
+            cluster_selection_method="leaf",
             prediction_data=True,
         )
         # NOTE: nr_topics is intentionally NOT set — let HDBSCAN find
