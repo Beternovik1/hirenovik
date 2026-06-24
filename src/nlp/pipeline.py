@@ -196,7 +196,7 @@ def _run_topic_model(
         )
 
     if fit_documents:
-        topic_model.fit(documents)
+        topic_model.fit(fit_documents)
         topics = topic_model.assign_topics(documents)
         df["topic_id"] = topics
         # Populate the topic-to-document mapping so the representative-jobs
