@@ -168,9 +168,9 @@ def _run_topic_model(
     """Fit a topic model, save it, and assign topics to ``df``.
 
     When ``df_clean`` is provided (from the outlier detection step),
-    the topic model is fit only on the clean (non-outlier) documents.
-    Topics are then assigned to the full ``df`` so every job receives
-    a topic label.
+    the topic model is fit only on the clean (non-outlier) documents
+    and outliers receive ``topic_id = -1``. Otherwise the model is fit
+    and assigned on the full ``documents`` list.
 
     Args:
         embedder: Embedder bound to the topic model.
@@ -197,7 +197,21 @@ def _run_topic_model(
 
     if fit_documents:
         topic_model.fit(fit_documents)
-        topics = topic_model.assign_topics(documents)
+
+        if df_clean is not None and len(df_clean) > 0:
+            # Model was fitted on clean docs only. Assign topics only to
+            # clean docs and give outliers topic_id=-1. This avoids NaN
+            # errors in HDBSCAN approximate_predict when outlier embeddings
+            # fall outside the fitted UMAP+HDBSCAN manifold.
+            topics_clean = topic_model.assign_topics(fit_documents)
+            clean_topic_map = dict(
+                zip(df_clean["id"].tolist(), topics_clean)
+            )
+            job_ids = [int(i) for i in df["id"].tolist()]
+            topics = [clean_topic_map.get(int(jid), -1) for jid in job_ids]
+        else:
+            topics = topic_model.assign_topics(documents)
+
         df["topic_id"] = topics
         # Populate the topic-to-document mapping so the representative-jobs
         # endpoint can resolve topic members after the model is reloaded.
