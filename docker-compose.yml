@@ -33,8 +33,14 @@ services:
     networks:
       - frontend-net   # Serves the frontend
       - backend-net    # Talks to the database (and any future internal services)
-    restart: unless-stopped
+    # restart: unless-stopped
     # Health check is defined in Dockerfile.api, compose respects it automatically
+    deploy:
+      resources:
+        limits:
+          # Esto limita la RAM a 8GB (ajusta según lo que necesites)
+          memory: 8G 
+    restart: "no"  # CAMBIA esto por "no" temporalmente mientras pruebas
 
   frontend:
     build:
