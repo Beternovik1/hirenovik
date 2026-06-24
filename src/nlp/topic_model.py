@@ -131,8 +131,8 @@ class TopicModel:
             max_df=0.8, min_df=5,
         )
         umap_model = UMAP(
-            n_neighbors=15,
-            n_components=5,
+            n_neighbors=10,
+            n_components=3,
             metric="cosine",
             random_state=42,
             low_memory=False,
@@ -141,7 +141,7 @@ class TopicModel:
             min_cluster_size=effective_min,
             min_samples=1,
             metric="euclidean",
-            cluster_selection_method="leaf",
+            cluster_selection_method="eom",
             prediction_data=True,
         )
         # NOTE: nr_topics is intentionally NOT set — let HDBSCAN find
