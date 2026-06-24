@@ -33,8 +33,9 @@ services:
     networks:
       - frontend-net   # Serves the frontend
       - backend-net    # Talks to the database (and any future internal services)
-    restart: unless-stopped
     # Health check is defined in Dockerfile.api, compose respects it automatically
+    restart: "no"
+    mem_limit: 14g
 
   frontend:
     build:
@@ -48,7 +49,7 @@ services:
     environment:
       # The frontend only knows about the API — never the database.
       # Service name "api" resolves via frontend-net DNS.
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       api:
         condition: service_healthy

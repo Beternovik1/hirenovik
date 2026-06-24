@@ -1,8 +1,13 @@
 // Centralized fetch wrapper for the Hirenovik FastAPI backend.
 // All functions return parsed JSON or null on failure.
-
+//
+// API_BASE differs between server and client:
+// - SSR (server-side inside Docker): uses http://api:8000 via Docker network
+// - Client (browser): uses http://localhost:8000 via host port mapping
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  typeof window === "undefined"
+    ? process.env.NEXT_PUBLIC_API_URL || "http://api:8000"
+    : "http://localhost:8000";
 
 // Small artificial delay so loading states are perceptible on fast networks.
 function delay(ms) {
