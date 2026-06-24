@@ -42,14 +42,14 @@ services:
       context: ./src/frontend
       dockerfile: Dockerfile.frontend
       args:
-        NEXT_PUBLIC_API_URL: http://api:8000
+        NEXT_PUBLIC_API_URL: http://localhost:8000
     container_name: hirenovik-frontend
     ports:
       - "3000:3000"
     environment:
       # The frontend only knows about the API — never the database.
       # Service name "api" resolves via frontend-net DNS.
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
     depends_on:
       api:
         condition: service_healthy
