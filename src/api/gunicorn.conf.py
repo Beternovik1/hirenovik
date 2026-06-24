@@ -24,19 +24,22 @@ import os
 
 
 def _calculate_workers() -> int:
-    """Return the worker count based on CPU availability.
+    """Return the worker count.
 
-    Uses the formula ``CPU * 2 + 1``. Falls back to 4 when the CPU count
-    cannot be determined or the container restricts visibility.
+    Each worker loads a full copy of the BERTopic model (~2 GB RAM).
+    We default to 2 workers to prevent OOM in production, matching
+    a typical RAM budget of 8-10 GB. Multiple workers are only needed
+    for concurrent request handling; 2 is enough for demo/portfolio.
+
+    Override via ``GUNICORN_WORKERS`` env var for large deployments.
 
     Returns:
-        Number of Gunicorn workers.
+        Number of Gunicorn workers (default 2).
     """
-    try:
-        cpu_count: int = multiprocessing.cpu_count()
-        return cpu_count * 2 + 1
-    except (NotImplementedError, OSError):
-        return 4
+    env_workers = os.environ.get("GUNICORN_WORKERS")
+    if env_workers is not None:
+        return int(env_workers)
+    return 2
 
 
 bind: str = os.environ.get("GUNICORN_BIND", "0.0.0.0:8000")
