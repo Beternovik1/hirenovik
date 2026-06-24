@@ -388,7 +388,12 @@ class TopicModel:
             engine.dispose()
 
     def save(self, path: str = DEFAULT_MODEL_PATH) -> None:
-        """Pickle the fitted BERTopic model to ``path``.
+        """Persist the fitted BERTopic model to ``path``.
+
+        Uses ``torch.save`` rather than ``pickle.dump`` so that PyTorch
+        tensors inside the model are serialised with device information,
+        allowing ``torch.load`` with ``map_location`` to load the model
+        on a CPU-only machine even when it was trained on GPU.
 
         The embedder is intentionally NOT pickled because it holds heavy
         external state and is expected to be injected on load.
@@ -396,9 +401,10 @@ class TopicModel:
         Args:
             path: Destination file path.
         """
+        import torch
+
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "wb") as fh:
-            pickle.dump(self._model, fh)
+        torch.save(self._model, path)
         with open(self.DEFAULT_KEYWORDS_PATH, "w", encoding="utf-8") as fh:
             json.dump(self._topic_keywords, fh, ensure_ascii=False, indent=2)
         if self._coherence:
@@ -419,6 +425,24 @@ class TopicModel:
                 )
         logger.info("Saved TopicModel to %s", path)
 
+    @staticmethod
+    def _load_model_pickle(path: str) -> object:
+        """Load a pickled BERTopic model, handling CUDA→CPU mapping.
+
+        Uses ``torch.load`` with ``map_location='cpu'`` so that models
+        trained on a GPU machine load cleanly on CPU-only deployments
+        (e.g. the Docker container) without CUDA device errors.
+
+        Args:
+            path: Path to the model file (``torch.save`` or legacy
+                ``pickle.dump`` format).
+
+        Returns:
+            The deserialized BERTopic model object.
+        """
+        import torch
+        return torch.load(path, map_location="cpu", weights_only=False)
+
     @classmethod
     def load(
         cls,
@@ -435,8 +459,7 @@ class TopicModel:
         Returns:
             A new :class:`TopicModel` with the fitted model hydrated.
         """
-        with open(path, "rb") as fh:
-            model = pickle.load(fh)
+        model = cls._load_model_pickle(path)
         os.makedirs(os.path.dirname(cls.DEFAULT_KEYWORDS_PATH) or ".", exist_ok=True)
         topic_keywords: dict[int, list[str]] = {}
         if os.path.exists(cls.DEFAULT_KEYWORDS_PATH):
