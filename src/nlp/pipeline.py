@@ -120,7 +120,7 @@ def _run_detect_outliers(
 
     detector = OutlierDetector(
         embedding_model=embedder._model,
-        contamination=0.10,
+        contamination=0.05,
     )
     df_clean, df_outliers, embeddings_clean = detector.run(df)
 

@@ -127,7 +127,8 @@ class TopicModel:
         effective_min = min(self.min_topic_size, max(len(documents), 1))
         representation_model = MaximalMarginalRelevance(diversity=0.7)
         vectorizer = CountVectorizer(
-            ngram_range=self.n_gram_range, stop_words=stop_words
+            ngram_range=self.n_gram_range, stop_words=stop_words,
+            max_df=0.8, min_df=5,
         )
         umap_model = UMAP(
             n_neighbors=15,
