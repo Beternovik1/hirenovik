@@ -175,10 +175,35 @@ class TopicModel:
         }
 
     def get_topic_info(self) -> pd.DataFrame:
-        """Return BERTopic's topic info DataFrame."""
+        """Return BERTopic's topic info DataFrame, augmented with cascade topics.
+
+        Cascade topics (added by the two-stage pipeline) are not present
+        in the underlying BERTopic model's internal state. This method
+        merges them from :attr:`_topic_keywords` and :attr:`_topic_docs`
+        so they appear alongside main-pass topics in the API response.
+        """
         if self._model is None:
             raise RuntimeError("TopicModel must be fit before calling get_topic_info")
-        return self._model.get_topic_info()
+        df = self._model.get_topic_info()
+
+        # Merge cascade topics that exist in keywords/docs but not in
+        # BERTopic's internal topic info.
+        main_ids: set[int] = set(int(t) for t in df["Topic"].values)
+        cascade_rows: list[dict] = []
+        for tid_str, keywords in self._topic_keywords.items():
+            tid = int(tid_str)
+            if tid >= 0 and tid not in main_ids:
+                count = len(self._topic_docs.get(tid, []))
+                name = "_".join(keywords[:4]) if keywords else f"topic_{tid}"
+                cascade_rows.append({
+                    "Topic": tid,
+                    "Count": count,
+                    "Name": name,
+                })
+        if cascade_rows:
+            cascade_df = pd.DataFrame(cascade_rows)
+            df = pd.concat([df, cascade_df], ignore_index=True)
+        return df
 
     def get_topic_keywords(self) -> dict[int, list[str]]:
         """Return a mapping of topic id to top keywords."""
