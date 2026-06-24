@@ -210,45 +210,26 @@ class TextPreprocessor:
                 self._en_stopwords = set()
 
     def clean_text_deep(self, text: str, lang: str) -> str:
-        """Apply language-specific processing after universal cleaning.
+        """Return universally-cleaned text unchanged.
 
-        For English: spaCy lemmatization and NLTK stopword removal.
-        NEG_ prefixing is deliberately NOT applied — it is a
-        sentiment-analysis technique (VADER path) that produces
-        garbage keywords like ``NEG_experience`` in topic modeling.
-        For Spanish and unknown languages: text is returned as-is
-        because the multilingual transformer handles morphology
-        and function words natively.
+        Language-specific lemmatization is deliberately skipped for all
+        languages. The multilingual transformer (paraphrase-multilingual-
+        MiniLM-L12-v2) handles morphology natively in the embedding
+        space, and spaCy lemmatization on short technical EN job text
+        produces garbled keywords (e.g. "two_box", "service_difference",
+        "datum") that poison c-TF-IDF topic representations.
 
         Args:
             text: Universally cleaned text string.
-            lang: Language code (``"en"`` or ``"es"``).
+            lang: Language code (``"en"`` or ``"es"``). Ignored — all
+                languages pass through unchanged.
 
         Returns:
-            Deep-cleaned text string.
+            Cleaned text string, identical to the input ``text``.
         """
         if not text or not text.strip():
             return ""
-
-        if lang != "en":
-            # Spanish and unknown: return text as-is after universal clean.
-            return text
-
-        # English: lemmatize + strip stopwords (no NEG_ prefix — job
-        # postings are not sentiment data).
-        self._load_en_nlp()
-        if self._nlp_en is None:
-            return text
-
-        doc = self._nlp_en(text)
-        stop = self._en_stopwords or set()
-
-        lemmas: list[str] = []
-        for token in doc:
-            if token.text not in stop:
-                lemmas.append(token.lemma_)
-
-        return " ".join(lemmas)
+        return text
 
     def clean_dataframe_deep(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply universal + language-aware deep cleaning to a DataFrame.
