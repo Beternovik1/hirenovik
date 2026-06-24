@@ -49,6 +49,7 @@ class TopicModel:
         n_gram_range: n-gram range passed to the CountVectorizer.
         min_topic_size: HDBSCAN ``min_topic_size``; small document sets
             are handled gracefully by lowering this to the document count.
+            Defaults to 20 for finer granularity.
         verbose: Whether BERTopic should print progress.
     """
 
@@ -61,7 +62,7 @@ class TopicModel:
         self,
         embedder: Embedder,
         n_gram_range: tuple = (1, 2),
-        min_topic_size: int = 30,
+        min_topic_size: int = 20,
         verbose: bool = True,
     ) -> None:
         self.embedder = embedder
@@ -84,6 +85,7 @@ class TopicModel:
             documents: List of cleaned description strings.
         """
         from bertopic import BERTopic
+        from bertopic.representation import MaximalMarginalRelevance
         from sklearn.feature_extraction.text import CountVectorizer
         from umap import UMAP
         from hdbscan import HDBSCAN
@@ -120,20 +122,37 @@ class TopicModel:
         }
         stop_words = list(_ES_STOPWORDS | _EN_STOPWORDS)
 
+        # Minimum 20, but clamp to the document count so small test/training
+        # sets don't raise from HDBSCAN preconditions.
         effective_min = min(self.min_topic_size, max(len(documents), 1))
+        representation_model = MaximalMarginalRelevance(diversity=0.7)
         vectorizer = CountVectorizer(
             ngram_range=self.n_gram_range, stop_words=stop_words
         )
-        umap_model = UMAP(n_neighbors=min(15, max(len(documents), 2)), random_state=42)
-        hdbscan_model = HDBSCAN(min_cluster_size=effective_min, min_samples=1, prediction_data=True)
+        umap_model = UMAP(
+            n_neighbors=10,
+            n_components=3,
+            metric="cosine",
+            random_state=42,
+            low_memory=False,
+        )
+        hdbscan_model = HDBSCAN(
+            min_cluster_size=effective_min,
+            min_samples=1,
+            metric="euclidean",
+            cluster_selection_method="eom",
+            prediction_data=True,
+        )
+        # NOTE: nr_topics is intentionally NOT set — let HDBSCAN find
+        # natural clusters rather than forcing auto-reduction.
         self._model = BERTopic(
             embedding_model=self.embedder._model if self.embedder._model else None,
             umap_model=umap_model,
             hdbscan_model=hdbscan_model,
             vectorizer_model=vectorizer,
+            representation_model=representation_model,
             verbose=self.verbose,
-            calculate_probabilities=False,
-            nr_topics="auto",
+            calculate_probabilities=True,
         )
         self._model.fit_transform(documents)
         self._refresh_topic_keywords()
@@ -228,6 +247,61 @@ class TopicModel:
             the topic has no documents or has not been assigned.
         """
         return list(self._topic_docs.get(int(topic_id), []))
+
+    def get_representative_docs(
+        self,
+        df: pd.DataFrame,
+        embeddings: np.ndarray,
+        n: int = 3,
+    ) -> dict[int, list[str]]:
+        """Return the n most central documents per topic.
+
+        Centrality is measured by cosine similarity to the topic
+        centroid. Requires a previously fit model with topic
+        assignments stored in ``df``.
+
+        Args:
+            df: DataFrame with ``id``, ``cleaned_description``, and
+                ``topic_id`` columns.
+            embeddings: Array aligned with ``df`` rows containing
+                precomputed document embeddings.
+            n: Number of representative docs to return per topic.
+
+        Returns:
+            Mapping ``{topic_id: [doc_text, ...]}`` for all topics
+            except -1. Each list has at most ``n`` entries.
+        """
+        embeddings = np.asarray(embeddings, dtype=np.float32)
+        if embeddings.ndim != 2:
+            raise ValueError("embeddings must be a 2D array")
+        if embeddings.shape[0] != len(df):
+            raise ValueError("embeddings and df must have the same length")
+
+        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        normalized = embeddings / norms
+
+        result: dict[int, list[str]] = {}
+        topic_ids = df["topic_id"].astype(int).tolist()
+        descriptions = df["cleaned_description"].tolist()
+
+        for topic_id in sorted(set(topic_ids)):
+            if topic_id == -1:
+                continue
+            positions = [i for i, t in enumerate(topic_ids) if t == topic_id]
+            if len(positions) <= 1:
+                result[int(topic_id)] = [descriptions[positions[0]]]
+                continue
+            members = normalized[positions]
+            centroid = members.mean(axis=0, keepdims=True)
+            centroid_norm = np.linalg.norm(centroid, axis=1, keepdims=True)
+            centroid_norm = np.where(centroid_norm == 0, 1.0, centroid_norm)
+            centroid = centroid / centroid_norm
+            sims = members @ centroid.reshape(-1)
+            top_idx = np.argsort(sims)[::-1][:n]
+            result[int(topic_id)] = [descriptions[positions[i]] for i in top_idx]
+
+        return result
 
     def compute_coherence(
         self,

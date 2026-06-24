@@ -41,10 +41,35 @@ class Embedder:
         self,
         model_name: str = DEFAULT_MODEL_NAME,
         cache_dir: str = DEFAULT_CACHE_DIR,
+        device: str = "auto",
     ) -> None:
         self.model_name = model_name
         self.cache_dir = cache_dir
+        self._device = self._resolve_device(device)
         self._model = None
+
+    @staticmethod
+    def _resolve_device(device: str) -> str:
+        """Resolve the compute device, detecting CUDA when ``"auto``.
+
+        Args:
+            device: ``"auto"``, ``"cuda"``, or ``"cpu"``.
+
+        Returns:
+            Concrete device string to pass to SentenceTransformer.
+        """
+        if device != "auto":
+            return device
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                logger.info("CUDA detected — using GPU for embeddings.")
+                return "cuda"
+        except ImportError:
+            pass
+        logger.info("Using CPU for embeddings.")
+        return "cpu"
 
     def _init_model(self) -> None:
         """Lazy-load the SentenceTransformer model on first use.
@@ -56,8 +81,12 @@ class Embedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            logger.info("Loading SentenceTransformer model: %s", self.model_name)
-            self._model = SentenceTransformer(self.model_name)
+            logger.info(
+                "Loading SentenceTransformer model: %s on device: %s",
+                self.model_name,
+                self._device,
+            )
+            self._model = SentenceTransformer(self.model_name, device=self._device)
 
     def encode_batch(
         self,
