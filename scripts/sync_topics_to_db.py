@@ -1,8 +1,8 @@
 """One-shot: sync topic assignments from JSON files to Supabase.
 
-Reads topic_docs.json (topic_id → job_ids) and topic_keywords.json
-(topic_id → keywords) and updates the keywords_json column in the
-jobs table for every job. Run this after retraining the topic model.
+Reads topic_docs.json and topic_keywords.json, then updates the jobs
+table in one SQL statement per topic (422 queries total instead of
+the naive 11,639 one-per-job approach).
 
 Usage:
     python scripts/sync_topics_to_db.py
@@ -13,8 +13,6 @@ import logging
 import os
 import sys
 
-# Ensure the project root is on sys.path so 'src' imports work regardless
-# of the working directory or how the script is invoked.
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
@@ -38,7 +36,7 @@ def main() -> None:
         topic_keywords: dict[str, list[str]] = json.load(f)
 
     total_jobs = sum(len(v) for v in topic_docs.values())
-    total_topics = len(topic_docs) - 1  # exclude -1
+    total_topics = len(topic_docs) - 1
     logger.info(
         "Loaded %d jobs across %d topics (+ noise topic -1)",
         total_jobs, total_topics,
@@ -55,17 +53,13 @@ def main() -> None:
                     "topic_id": topic_id,
                     "topic_keywords": kw,
                 }
-                for job_id in job_ids:
-                    session.execute(
-                        update(Job)
-                        .where(Job.id == int(job_id))
-                        .values(keywords_json=payload)
-                    )
-                    updated += 1
-
-                if updated % 500 == 0:
-                    session.commit()
-                    logger.info("Committed %d updates ...", updated)
+                ids = [int(j) for j in job_ids]
+                session.execute(
+                    update(Job)
+                    .where(Job.id.in_(ids))
+                    .values(keywords_json=payload)
+                )
+                updated += len(ids)
 
             session.commit()
             logger.info("Synced %d job topic assignments to Supabase", updated)
