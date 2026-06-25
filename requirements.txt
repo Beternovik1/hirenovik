@@ -14,6 +14,9 @@ greenlet==3.3.1
 idna==3.11
 jmespath==1.1.0
 markdownify==0.13.1
+# ------------------------------------------------------------------
+# NLP + API dependencies (needed in Docker image AND host)
+# ------------------------------------------------------------------
 numpy==2.4.6
 pandas==2.3.3
 pillow==12.1.1
@@ -23,7 +26,7 @@ pydantic_core==2.41.5
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
-python-jobspy==1.1.82
+python-jobspy>=1.2
 pytz==2025.2
 regex==2024.11.6
 requests==2.32.5
