@@ -127,7 +127,8 @@ class TopicModel:
         effective_min = min(self.min_topic_size, max(len(documents), 1))
         representation_model = MaximalMarginalRelevance(diversity=0.7)
         vectorizer = CountVectorizer(
-            ngram_range=self.n_gram_range, stop_words=stop_words
+            ngram_range=self.n_gram_range, stop_words=stop_words,
+            max_df=0.8, min_df=5,
         )
         umap_model = UMAP(
             n_neighbors=10,
@@ -174,10 +175,47 @@ class TopicModel:
         }
 
     def get_topic_info(self) -> pd.DataFrame:
-        """Return BERTopic's topic info DataFrame."""
+        """Return BERTopic's topic info DataFrame, augmented with cascade topics.
+
+        Cascade topics (added by the two-stage pipeline) are not present
+        in the underlying BERTopic model's internal state. This method
+        merges them from :attr:`_topic_keywords` and :attr:`_topic_docs`
+        so they appear alongside main-pass topics in the API response.
+
+        All topic counts are recalculated from :attr:`_topic_docs` so the
+        post-cascade assignment (including rescued documents) is reflected
+        accurately.
+        """
         if self._model is None:
             raise RuntimeError("TopicModel must be fit before calling get_topic_info")
-        return self._model.get_topic_info()
+        df = self._model.get_topic_info()
+
+        # Override counts from _topic_docs — the post-cascade counts are
+        # authoritative (BERTopic's internal DataFrame is pre-cascade).
+        if self._topic_docs:
+            count_map = {int(tid): len(ids) for tid, ids in self._topic_docs.items()}
+            df["Count"] = df["Topic"].apply(
+                lambda t: count_map.get(int(t), 0)
+            )
+
+        # Merge cascade topics that exist in keywords/docs but not in
+        # BERTopic's internal topic info.
+        main_ids: set[int] = set(int(t) for t in df["Topic"].values)
+        cascade_rows: list[dict] = []
+        for tid_str, keywords in self._topic_keywords.items():
+            tid = int(tid_str)
+            if tid >= 0 and tid not in main_ids:
+                count = len(self._topic_docs.get(tid, []))
+                name = "_".join(keywords[:4]) if keywords else f"topic_{tid}"
+                cascade_rows.append({
+                    "Topic": tid,
+                    "Count": count,
+                    "Name": name,
+                })
+        if cascade_rows:
+            cascade_df = pd.DataFrame(cascade_rows)
+            df = pd.concat([df, cascade_df], ignore_index=True)
+        return df
 
     def get_topic_keywords(self) -> dict[int, list[str]]:
         """Return a mapping of topic id to top keywords."""
@@ -404,7 +442,21 @@ class TopicModel:
         import torch
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        torch.save(self._model, path)
+
+        # Strip the SentenceTransformer from the BERTopic model before
+        # serialisation so the pickle does not embed a specific
+        # sentence-transformers version/module path that may differ
+        # between host (GPU training) and Docker (CPU serving).
+        embedder_backup = None
+        if self._model is not None:
+            embedder_backup = getattr(self._model, "embedding_model", None)
+            self._model.embedding_model = None
+
+        try:
+            torch.save(self._model, path)
+        finally:
+            if embedder_backup is not None and self._model is not None:
+                self._model.embedding_model = embedder_backup
         with open(self.DEFAULT_KEYWORDS_PATH, "w", encoding="utf-8") as fh:
             json.dump(self._topic_keywords, fh, ensure_ascii=False, indent=2)
         if self._coherence:
@@ -469,6 +521,11 @@ class TopicModel:
                 }
         instance = cls(embedder=embedder) if embedder is not None else cls(embedder=Embedder())
         instance._model = model
+        # Reinject the SentenceTransformer into the deserialized BERTopic
+        # model since it was stripped during save() to avoid version-locking
+        # the pickle to a specific sentence-transformers module path.
+        if embedder is not None and embedder._model is not None:
+            instance._model.embedding_model = embedder._model
         instance._topic_keywords = topic_keywords
         # Load coherence from disk if available.
         coherence: dict[int, float] = {}

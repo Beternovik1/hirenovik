@@ -34,7 +34,7 @@ DEFAULT_CACHE_DIR = "data/embeddings_cache"
 MAX_PCA_COMPONENTS = 50
 
 #: IsolationForest expected proportion of outliers in the dataset.
-DEFAULT_CONTAMINATION = 0.10
+DEFAULT_CONTAMINATION = 0.05
 
 #: Reproducibility seed for PCA and IsolationForest.
 RANDOM_SEED = 42

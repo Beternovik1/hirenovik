@@ -120,7 +120,7 @@ def _run_detect_outliers(
 
     detector = OutlierDetector(
         embedding_model=embedder._model,
-        contamination=0.10,
+        contamination=0.05,
     )
     df_clean, df_outliers, embeddings_clean = detector.run(df)
 
@@ -159,6 +159,110 @@ def _run_detect_outliers(
     return df_clean, df_outliers, embeddings_clean
 
 
+def _cascade_noise_docs(
+    topic_model: "TopicModel",
+    embedder: "Embedder",
+    df: pd.DataFrame,
+    noise_mask: "pd.Series",
+    noise_count: int,
+    job_ids: list[int],
+) -> None:
+    """Second-stage BERTopic on noise docs to rescue small clusters.
+
+    When the main HDBSCAN pass leaves many docs in topic -1, this
+    function fits a separate BERTopic with ``min_topic_size=10`` on
+    just the noise documents. Rescued docs are reassigned with topic
+    IDs offset above the main pass maximum, and their keywords are
+    merged into ``topic_model._topic_keywords``.
+
+    Args:
+        topic_model: Main-pass TopicModel whose keywords are extended.
+        embedder: Shared embedder whose SentenceTransformer is reused.
+        df: Full DataFrame — ``topic_id`` column is mutated in place.
+        noise_mask: Boolean mask of ``df`` rows where topic_id == -1.
+        noise_count: Pre-computed count (``noise_mask.sum()``).
+        job_ids: Full list of job IDs aligned with ``df`` rows.
+    """
+    logger.info(
+        "Cascade stage 2: reclustering %d noise docs (min_topic_size=10)",
+        noise_count,
+    )
+    from bertopic import BERTopic
+    from bertopic.representation import MaximalMarginalRelevance
+    from sklearn.feature_extraction.text import CountVectorizer
+    from umap import UMAP
+    from hdbscan import HDBSCAN
+
+    noise_df = df.loc[noise_mask]
+    noise_docs = noise_df["cleaned_description"].tolist()
+
+    # Simpler UMAP for the residual noise space: fewer neighbours and
+    # dimensions since these docs are already the hard leftovers.
+    cascade_umap = UMAP(
+        n_neighbors=5,
+        n_components=2,
+        metric="cosine",
+        random_state=42,
+        low_memory=False,
+    )
+    cascade_hdbscan = HDBSCAN(
+        min_cluster_size=10,
+        min_samples=1,
+        metric="euclidean",
+        cluster_selection_method="eom",
+        prediction_data=True,
+    )
+    cascade_vectorizer = CountVectorizer(
+        ngram_range=(1, 2),
+        max_df=0.8,
+        min_df=3,
+    )
+    cascade_mmr = MaximalMarginalRelevance(diversity=0.7)
+
+    cascade = BERTopic(
+        embedding_model=embedder._model,
+        umap_model=cascade_umap,
+        hdbscan_model=cascade_hdbscan,
+        vectorizer_model=cascade_vectorizer,
+        representation_model=cascade_mmr,
+        verbose=False,
+        calculate_probabilities=False,
+    )
+    cascade_topics, _ = cascade.fit_transform(noise_docs)
+
+    # Offset cascade topic IDs to avoid colliding with main-pass topics.
+    existing_max = max(
+        (int(t) for t in df["topic_id"].unique() if int(t) >= 0),
+        default=-1,
+    )
+    offset = existing_max + 1
+
+    rescued = 0
+    for (idx, _), cascade_tid in zip(noise_df.iterrows(), cascade_topics):
+        if cascade_tid >= 0:
+            df.at[idx, "topic_id"] = cascade_tid + offset
+            rescued += 1
+
+    # Merge cascade keywords into the main topic model's keyword store.
+    cascade_kw = cascade.get_topics()
+    cascade_topic_count = 0
+    for cascade_tid, words in cascade_kw.items():
+        if cascade_tid >= 0:
+            topic_model._topic_keywords[cascade_tid + offset] = [
+                w for w, _ in words
+            ]
+            cascade_topic_count += 1
+
+    logger.info(
+        "Cascade rescued %d docs into %d new topics (offset %d, "
+        "%d docs remain in -1)",
+        rescued,
+        cascade_topic_count,
+        offset,
+        noise_count - rescued,
+    )
+
+
 def _run_topic_model(
     embedder: Embedder,
     documents: list[str],
@@ -168,9 +272,9 @@ def _run_topic_model(
     """Fit a topic model, save it, and assign topics to ``df``.
 
     When ``df_clean`` is provided (from the outlier detection step),
-    the topic model is fit only on the clean (non-outlier) documents.
-    Topics are then assigned to the full ``df`` so every job receives
-    a topic label.
+    the topic model is fit only on the clean (non-outlier) documents
+    and outliers receive ``topic_id = -1``. Otherwise the model is fit
+    and assigned on the full ``documents`` list.
 
     Args:
         embedder: Embedder bound to the topic model.
@@ -184,7 +288,7 @@ def _run_topic_model(
         Fitted :class:`TopicModel`.
     """
     logger.info("Step 'topic_model': starting")
-    topic_model = TopicModel(embedder=embedder, min_topic_size=20)
+    topic_model = TopicModel(embedder=embedder, min_topic_size=15)
 
     fit_documents = documents
     if df_clean is not None and len(df_clean) > 0:
@@ -196,8 +300,22 @@ def _run_topic_model(
         )
 
     if fit_documents:
-        topic_model.fit(documents)
-        topics = topic_model.assign_topics(documents)
+        topic_model.fit(fit_documents)
+
+        if df_clean is not None and len(df_clean) > 0:
+            # Model was fitted on clean docs only. Assign topics only to
+            # clean docs and give outliers topic_id=-1. This avoids NaN
+            # errors in HDBSCAN approximate_predict when outlier embeddings
+            # fall outside the fitted UMAP+HDBSCAN manifold.
+            topics_clean = topic_model.assign_topics(fit_documents)
+            clean_topic_map = dict(
+                zip(df_clean["id"].tolist(), topics_clean)
+            )
+            job_ids = [int(i) for i in df["id"].tolist()]
+            topics = [clean_topic_map.get(int(jid), -1) for jid in job_ids]
+        else:
+            topics = topic_model.assign_topics(documents)
+
         df["topic_id"] = topics
         # Populate the topic-to-document mapping so the representative-jobs
         # endpoint can resolve topic members after the model is reloaded.
@@ -205,7 +323,27 @@ def _run_topic_model(
         topic_docs: dict[int, list[int]] = {}
         for job_id, topic_id in zip(job_ids, topics):
             topic_docs.setdefault(int(topic_id), []).append(int(job_id))
-        topic_model._topic_docs = topic_docs
+
+        # ── Two-stage cascade ──────────────────────────────────────
+        # Recluster noise docs (-1) with relaxed parameters to rescue
+        # small but coherent clusters that couldn't meet the 15-doc
+        # minimum in the main HDBSCAN pass.
+        noise_mask = df["topic_id"] == -1
+        noise_count = int(noise_mask.sum())
+
+        if noise_count >= 100:
+            _cascade_noise_docs(
+                topic_model, embedder, df, noise_mask, noise_count, job_ids,
+            )
+
+        # Rebuild topic_docs after cascade may have reassigned docs.
+        final_topics = df["topic_id"].tolist()
+        topic_model._topic_docs = {}
+        for job_id, topic_id in zip(job_ids, final_topics):
+            topic_model._topic_docs.setdefault(
+                int(topic_id), []
+            ).append(int(job_id))
+
         topic_model.save()
     else:
         df["topic_id"] = []

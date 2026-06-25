@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libopenblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only requirements to cache pip layer
-COPY requirements.txt .
+# Copy only API requirements (scraper packages excluded)
+COPY requirements-api.txt requirements.txt
 
 # Install ALL dependencies into a prefix dir for the runtime stage
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
@@ -36,7 +36,6 @@ COPY --from=builder /install /usr/local
 
 # Copy application code
 COPY src/ /app/src/
-COPY requirements.txt /app/
 
 # Copy gunicorn config
 COPY src/api/gunicorn.conf.py /app/gunicorn.conf.py
