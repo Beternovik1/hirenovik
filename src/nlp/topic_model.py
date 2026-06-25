@@ -181,10 +181,22 @@ class TopicModel:
         in the underlying BERTopic model's internal state. This method
         merges them from :attr:`_topic_keywords` and :attr:`_topic_docs`
         so they appear alongside main-pass topics in the API response.
+
+        All topic counts are recalculated from :attr:`_topic_docs` so the
+        post-cascade assignment (including rescued documents) is reflected
+        accurately.
         """
         if self._model is None:
             raise RuntimeError("TopicModel must be fit before calling get_topic_info")
         df = self._model.get_topic_info()
+
+        # Override counts from _topic_docs — the post-cascade counts are
+        # authoritative (BERTopic's internal DataFrame is pre-cascade).
+        if self._topic_docs:
+            count_map = {int(tid): len(ids) for tid, ids in self._topic_docs.items()}
+            df["Count"] = df["Topic"].apply(
+                lambda t: count_map.get(int(t), 0)
+            )
 
         # Merge cascade topics that exist in keywords/docs but not in
         # BERTopic's internal topic info.
