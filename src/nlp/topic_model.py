@@ -430,7 +430,21 @@ class TopicModel:
         import torch
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        torch.save(self._model, path)
+
+        # Strip the SentenceTransformer from the BERTopic model before
+        # serialisation so the pickle does not embed a specific
+        # sentence-transformers version/module path that may differ
+        # between host (GPU training) and Docker (CPU serving).
+        embedder_backup = None
+        if self._model is not None:
+            embedder_backup = getattr(self._model, "embedding_model", None)
+            self._model.embedding_model = None
+
+        try:
+            torch.save(self._model, path)
+        finally:
+            if embedder_backup is not None and self._model is not None:
+                self._model.embedding_model = embedder_backup
         with open(self.DEFAULT_KEYWORDS_PATH, "w", encoding="utf-8") as fh:
             json.dump(self._topic_keywords, fh, ensure_ascii=False, indent=2)
         if self._coherence:
@@ -495,6 +509,11 @@ class TopicModel:
                 }
         instance = cls(embedder=embedder) if embedder is not None else cls(embedder=Embedder())
         instance._model = model
+        # Reinject the SentenceTransformer into the deserialized BERTopic
+        # model since it was stripped during save() to avoid version-locking
+        # the pickle to a specific sentence-transformers module path.
+        if embedder is not None and embedder._model is not None:
+            instance._model.embedding_model = embedder._model
         instance._topic_keywords = topic_keywords
         # Load coherence from disk if available.
         coherence: dict[int, float] = {}

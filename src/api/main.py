@@ -40,6 +40,9 @@ def _try_load_topic_model() -> Optional[object]:
         if embedder is None:
             logger.warning("TopicModel unavailable: embedder not loaded")
             return None
+        # Force embedder init so the SentenceTransformer can be injected
+        # into the deserialized BERTopic model (stripped during save).
+        embedder._init_model()
         settings = get_settings()
         model = TopicModel.load(path=settings.bertopic_model_path, embedder=embedder)
         logger.info("TopicModel loaded from %s", settings.bertopic_model_path)
