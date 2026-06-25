@@ -26,7 +26,7 @@ pydantic_core==2.41.5
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
-python-jobspy>=1.2
+python-jobspy==1.1.82
 pytz==2025.2
 regex==2024.11.6
 requests==2.32.5
