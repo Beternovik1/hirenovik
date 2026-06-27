@@ -5,6 +5,8 @@ import pandas as pd
 import xgboost as xgb
 import s3fs
 
+from src.ml.training.train import FEATURE_COLUMNS
+
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MODELS_BUCKET = os.environ.get("MODELS_BUCKET", "hirenovik-models-dev")
 RAW_BUCKET = os.environ.get("RAW_BUCKET", "hirenovik-raw-dev")
@@ -33,8 +35,8 @@ def main():
     y_val = val_df.iloc[:, 0]
     
     print("Training XGBoost model locally...")
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval = xgb.DMatrix(X_val, label=y_val)
+    dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=FEATURE_COLUMNS)
+    dval = xgb.DMatrix(X_val, label=y_val, feature_names=FEATURE_COLUMNS)
     
     params = {
         "objective": "reg:squarederror",

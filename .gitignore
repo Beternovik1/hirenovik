@@ -50,6 +50,9 @@ src/nlp/outputs/*.html
 # NLP serialized model artifacts (created at pipeline runtime)
 src/nlp/models/
 
+# ML serialized model artifacts (created at training time)
+src/ml/models/
+
 # Notebooks checkpoints
 .ipynb_checkpoints/
 .opencode
