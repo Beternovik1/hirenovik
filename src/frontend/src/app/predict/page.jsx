@@ -42,6 +42,8 @@ function parseSkills(text) {
 export default function PredictPage() {
   const [input, setInput] = useState("");
   const [skills, setSkills] = useState([]);
+  const [seniority, setSeniority] = useState(1);
+  const [modality, setModality] = useState(2);
   const [prediction, setPrediction] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -83,7 +85,7 @@ export default function PredictPage() {
     setError(null);
     setPrediction(null);
 
-    const result = await fetchPredict(all);
+    const result = await fetchPredict({ skills: all, seniority, modality });
     setLoading(false);
 
     if (!result) {
@@ -97,7 +99,7 @@ export default function PredictPage() {
   }
 
   // Predicted salary + ±15% confidence interval.
-  const predicted = prediction?.predicted_salary ?? prediction?.salary ?? prediction?.prediction;
+  const predicted = prediction?.predicted_salary_mid_mxn ?? prediction?.predicted_salary ?? prediction?.salary ?? prediction?.prediction;
   const lo = predicted != null ? predicted * 0.85 : null;
   const hi = predicted != null ? predicted * 1.15 : null;
   const fmt = (n) =>
@@ -160,6 +162,35 @@ export default function PredictPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Seniority & Modality */}
+        <div className="grid grid-cols-2 gap-4">
+          <label className="block">
+            <span className="text-sm text-hirenovik-text-secondary">Seniority</span>
+            <select
+              value={seniority}
+              onChange={(e) => setSeniority(Number(e.target.value))}
+              className="mt-1 w-full bg-hirenovik-bg text-hirenovik-text border border-hirenovik-border rounded-md p-2 text-sm focus:outline-none focus:border-hirenovik-link"
+            >
+              <option value={0}>Junior</option>
+              <option value={1}>Mid-level</option>
+              <option value={2}>Semi-Senior</option>
+              <option value={3}>Senior / Lead</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-sm text-hirenovik-text-secondary">Work modality</span>
+            <select
+              value={modality}
+              onChange={(e) => setModality(Number(e.target.value))}
+              className="mt-1 w-full bg-hirenovik-bg text-hirenovik-text border border-hirenovik-border rounded-md p-2 text-sm focus:outline-none focus:border-hirenovik-link"
+            >
+              <option value={0}>Remote</option>
+              <option value={1}>Hybrid</option>
+              <option value={2}>On-site</option>
+            </select>
+          </label>
         </div>
 
         <button

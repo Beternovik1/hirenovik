@@ -106,8 +106,8 @@ export function fetchExpand(seed, rounds = 3) {
   return postJSON("/topics/expand", { seed_text: seed, rounds });
 }
 
-export function fetchPredict(skills) {
-  return postJSON("/predict/salary", { skills });
+export function fetchPredict({ skills, seniority = 1, modality = 2, years_experience = 2 }) {
+  return postJSON("/predict/salary", { skills, seniority, modality, years_experience });
 }
 
 export function fetchSkills(text) {
