@@ -17,7 +17,7 @@ markdownify==0.13.1
 # ------------------------------------------------------------------
 # NLP + API dependencies (needed in Docker image AND host)
 # ------------------------------------------------------------------
-numpy==2.4.6
+numpy==1.26.3
 pandas==2.3.3
 pillow==12.1.1
 psycopg2-binary==2.9.11
