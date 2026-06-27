@@ -30,6 +30,7 @@ services:
       - NLP_MODELS_DIR=/app/src/nlp/models
     volumes:
       - nlp_models:/app/src/nlp/models
+      - ./src/ml/models:/app/src/ml/models
     networks:
       - frontend-net   # Serves the frontend
       - backend-net    # Talks to the database (and any future internal services)
