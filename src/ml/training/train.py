@@ -31,7 +31,7 @@ FEATURE_COLUMNS = [
     "years_experience",
 ] + [f"has_{kw}" for kw in KEYWORD_FEATURES]
 
-TARGET_COLUMN = "salary_mid_usd"
+TARGET_COLUMN = "salary_mid"
 
 
 def load_parquet(bucket: str) -> pd.DataFrame:
