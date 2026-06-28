@@ -21,7 +21,7 @@ jobs:
       - name: Setting up Python
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-docker.txt
 
       - name: Running Supabase → S3 export
         env:
