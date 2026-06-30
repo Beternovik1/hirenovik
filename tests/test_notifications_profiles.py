@@ -28,6 +28,7 @@ class TestIndustrialIrapuatoBajioProfile:
             "celaya",
             "leon",
             "silao",
+            "puerto interior",
             "guanajuato",
             "apaseo",
             "villagran",
