@@ -32,6 +32,41 @@ STATE_HOMONYMOUS_CITIES: frozenset[str] = frozenset({"guanajuato"})
 # "Gto." / "GTO" / "Gto".
 GUANAJUATO_STATE_TOKENS: frozenset[str] = frozenset({"guanajuato", "gto"})
 
+# Include/reject keywords that must match on word boundaries rather than as bare
+# substrings. These are short, high-risk CV tokens curated by auditing each
+# keyword against common Spanish/English words:
+#   - "sap" leaks inside "whatsapp" and "sapphire".
+#   - "quality" leaks inside "equality" and "inequality".
+#   - "lean" leaks inside "cleans", "cleanliness", "leaning", and the Spanish
+#     "lineamiento" (policy guideline).
+# Longer tokens (warehouse, inventory, materials, logistics) have no common
+# host word, and forcing boundaries on them would lose legitimate plurals such
+# as "warehouses"; Spanish terms like "almacen" stay substring-based so they
+# still match "almacenista". Only demonstrably-leaky tokens get exact matching.
+_EXACT_MATCH_KEYWORDS: frozenset[str] = frozenset({"sap", "quality", "lean"})
+
+
+def _keyword_in_text(keyword: str, text: str) -> bool:
+    """Return True if ``keyword`` is present in ``text`` under keyword semantics.
+
+    Members of :data:`_EXACT_MATCH_KEYWORDS` require word boundaries so e.g.
+    ``"sap"`` matches ``"SAP"`` / ``"SAP-WM"`` / ``"SAP."`` but NOT ``"whatsapp"``
+    or ``"sapphire"``, and ``"quality"`` does not match ``"equality"``. All other
+    keywords use plain substring matching, preserving useful behavior like
+    ``"almacen"`` matching ``"almacenista"``. Used by the matcher and the scorer
+    so relevance semantics stay identical across both layers.
+
+    Args:
+        keyword: Accent-folded lowercase keyword.
+        text: Normalized (folded/lowercased) searchable text.
+
+    Returns:
+        True when the keyword matches under its semantics.
+    """
+    if keyword in _EXACT_MATCH_KEYWORDS:
+        return re.search(rf"\b{re.escape(keyword)}\b", text) is not None
+    return keyword in text
+
 
 def _fold_accents(text: str) -> str:
     """Return ``text`` with combining diacritical marks removed (NFD -> strip Mn).
@@ -159,17 +194,19 @@ def _matches_keywords(
     Args:
         text: Normalized searchable text (typically title + description).
         include_keywords: Accent-folded lowercase keywords.
-        exclude_keywords: Accent-folded lowercase keywords.
+        exclude_keywords: Accent-folded lowercase keywords (already a union of
+            the profile's ``exclude_keywords`` and ``reject_keywords`` at the
+            call site via :func:`match_job`).
 
     Returns:
         The first matching include keyword, or ``None`` when excluded or when no
         include keyword is found.
     """
     for keyword in exclude_keywords:
-        if keyword in text:
+        if _keyword_in_text(keyword, text):
             return None
     for keyword in include_keywords:
-        if keyword in text:
+        if _keyword_in_text(keyword, text):
             return keyword
     return None
 
@@ -178,8 +215,12 @@ def match_job(record: dict, profile: AlertProfile) -> dict | None:
     """Evaluate a single job record against ``profile``.
 
     A job matches when its city part is in ``profile.allowed_cities`` AND its
-    searchable text (title + description) contains an include keyword AND no
-    exclude keyword.
+    searchable text (title + description) contains an include keyword AND none of
+    the hard-reject terms (``exclude_keywords`` union ``reject_keywords``) are
+    present. ``reject_keywords`` is part of the global alert relevance contract:
+    unpaid/volunteer terms (e.g. "sin remuneracion", "voluntario") are rejected
+    by the matcher too, not only by the scorer, so every consumer of the match
+    verdict shares the same relevance gate.
 
     Args:
         record: Job-like dict with at least ``title`` and a location field
@@ -200,8 +241,13 @@ def match_job(record: dict, profile: AlertProfile) -> dict | None:
         _first_non_empty(record, "title"),
         _first_non_empty(record, "description"),
     )
+    # Union of binary exclude and scorer reject: matcher-relevant terms (e.g.
+    # internships) plus contract-relevant terms (e.g. unpaid/volunteer). For
+    # profiles with no reject_keywords (default empty tuple) this is exactly
+    # exclude_keywords, so legacy behavior is byte-for-byte preserved.
+    reject_terms = (*profile.exclude_keywords, *profile.reject_keywords)
     matched_keyword = _matches_keywords(
-        searchable, profile.include_keywords, profile.exclude_keywords
+        searchable, profile.include_keywords, reject_terms
     )
     if matched_keyword is None:
         return None
