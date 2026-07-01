@@ -6,6 +6,14 @@ on:
     - cron: '17 12 * * *'
   workflow_dispatch: # Manual button for testings
 
+# Prevent overlapping scraper runs against the same datacenter IP. Scheduled and
+# manual runs share one concurrency group; a new run waits for the previous one
+# to finish rather than canceling it mid-scrape (canceling could leave the DB in
+# a partial PENDING_ENRICHMENT state).
+concurrency:
+  group: daily-scout
+  cancel-in-progress: false
+
 jobs:
   run-docker-pipeline:
     runs-on: ubuntu-latest
@@ -28,5 +36,6 @@ jobs:
         -e EMAIL_PASS="${EMAIL_PASS}" \
         -e DATABASE_URL="${DATABASE_URL}" \
         -e WORKER_NAME="GitHub_Actions" \
-        -e EXECUTION_MODE="cloud_extraction" \
+        -e EXECUTION_MODE="multi_profile_cloud_extraction" \
+        -e PROFILE_COOLDOWN_SECONDS="60" \
         bajio-scout

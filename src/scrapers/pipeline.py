@@ -8,7 +8,12 @@ from database.models import db_connect, create_tables, Job
 from etl.extract import extract_data
 from etl.transform import transform_data, clean, detect_state
 from etl.loaders import load_data
-from shared.config import NEW_SCRAPERS_CONFIG, ENRICHMENT_CONFIG
+from shared.config import (
+    NEW_SCRAPERS_CONFIG,
+    ENRICHMENT_CONFIG,
+    get_search_config_for_profile,
+    get_profile_results_limit,
+)
 from scrapers.computrabajo_scraper import ComputrabajoScraper
 from scrapers.occ_scraper import OCCScraper
 from shared.config import include_linkedin_today
@@ -90,13 +95,36 @@ def run_pipeline(search_config, results_limit, include_linkedin=False):
         logger.info("Conexión de base de datos cerrada.")
 
 
-def run_cloud_extraction_pipeline(search_config, results_limit):
-    """
-    Runs on GitHub Actions (datacenter IPs).
-    - Runs JobSpy (Indeed only, exclude LinkedIn).
-    - Checks `enabled` flag in NEW_SCRAPERS_CONFIG before running Computrabajo/OCC Phase 1.
-    - Keywords extracted dynamically from search_config.
-    - Inserts all results into the DB (Phase 1 records get status='PENDING_ENRICHMENT').
+def run_cloud_extraction_pipeline(
+    search_config,
+    results_limit,
+    metadata_results_limit=None,
+):
+    """Run Phase 1 cloud extraction on datacenter IPs.
+
+    Runs JobSpy (Indeed; LinkedIn gated by include_linkedin_today()) and the
+    Computrabajo/OCC metadata scrapers when their ``enabled`` flag is set in
+    ``NEW_SCRAPERS_CONFIG``. All results insert into the DB with
+    ``status='PENDING_ENRICHMENT'``.
+
+    The ``results_limit`` controls JobSpy rows per search term. The Computrabajo
+    and OCC ``scrape_metadata`` calls use ``max_results`` from
+    ``NEW_SCRAPERS_CONFIG`` by default (legacy behavior). When
+    ``metadata_results_limit`` is provided, it overrides both metadata scrapers'
+    ``max_results`` so a profile-specific cap applies consistently across ALL
+    scraper paths (JobSpy, Computrabajo, OCC). This is used by the multi-profile
+    daily scout to keep low-volume industrial scrapes conservative across every
+    board, not just JobSpy.
+
+    Args:
+        search_config: Iterable of ``(search_term, location, industry_niche)``.
+        results_limit: JobSpy results wanted per search term.
+        metadata_results_limit: Optional cap applied to Computrabajo and OCC
+            ``scrape_metadata`` ``max_results``. ``None`` keeps the
+            ``NEW_SCRAPERS_CONFIG`` defaults (legacy tech-only manual runs).
+
+    Returns:
+        None. Inserted/skipped counts are logged in the summary line.
     """
     engine = db_connect()
     create_tables(engine)
@@ -111,6 +139,20 @@ def run_cloud_extraction_pipeline(search_config, results_limit):
 
     computrabajo_scraper = ComputrabajoScraper() if computrabajo_enabled else None
     occ_scraper = OCCScraper() if occ_enabled else None
+
+    # When a metadata cap is passed, it applies to every board so the
+    # profile-specific low-volume rule is real across all scraper paths.
+    # None preserves legacy NEW_SCRAPERS_CONFIG defaults for tech-only manual runs.
+    computrabajo_max = (
+        metadata_results_limit
+        if metadata_results_limit is not None
+        else NEW_SCRAPERS_CONFIG["computrabajo"]["max_results"]
+    )
+    occ_max = (
+        metadata_results_limit
+        if metadata_results_limit is not None
+        else NEW_SCRAPERS_CONFIG["occ"]["max_results"]
+    )
 
     try:
         for search_term, location, industry_niche in search_config:
@@ -137,7 +179,7 @@ def run_cloud_extraction_pipeline(search_config, results_limit):
                     keywords=[search_term],
                     countries=NEW_SCRAPERS_CONFIG["computrabajo"]["countries"],
                     is_remote=NEW_SCRAPERS_CONFIG["computrabajo"]["is_remote"],
-                    max_results=NEW_SCRAPERS_CONFIG["computrabajo"]["max_results"],
+                    max_results=computrabajo_max,
                 )
                 if not df_ct.empty:
                     records = _map_phase1_records(df_ct, search_term, industry_niche)
@@ -151,7 +193,7 @@ def run_cloud_extraction_pipeline(search_config, results_limit):
                     keywords=[search_term],
                     countries=["MX"],
                     is_remote=NEW_SCRAPERS_CONFIG["occ"]["is_remote"],
-                    max_results=NEW_SCRAPERS_CONFIG["occ"]["max_results"],
+                    max_results=occ_max,
                 )
                 if not df_occ.empty:
                     records = _map_phase1_records(df_occ, search_term, industry_niche)
@@ -172,6 +214,83 @@ def run_cloud_extraction_pipeline(search_config, results_limit):
             total_inserted["computrabajo"], total_skipped["computrabajo"],
             total_inserted["occ"], total_skipped["occ"],
         )
+
+
+def run_multi_profile_cloud_extraction(
+    profiles: list[str],
+    cooldown_seconds: int,
+) -> None:
+    """Run cloud extraction for multiple profiles sequentially in one process.
+
+    Profiles are scraped one after another (never in parallel) so we avoid
+    spawning competing scraper workflows against the same datacenter IP. A
+    ``cooldown_seconds`` sleep is applied between profiles for anti-ban safety.
+
+    Each profile gets its own conservative ``results_limit`` looked up via
+    ``get_profile_results_limit``. Each profile reuses
+    ``run_cloud_extraction_pipeline``, which manages its own DB session, so a
+    failure in one profile does not corrupt the session of the next.
+
+    Validation runs UP FRONT: every profile name is resolved before any scraping
+    begins, so an env typo raises ``ValueError`` before a single request is made.
+    This prevents a partial run where one profile scrapes and the next silently
+    fails to duplicate tech rows.
+
+    Args:
+        profiles: Ordered list of profile names to run (e.g.
+            ``["tech_mx", "industrial_irapuato_bajio"]``).
+        cooldown_seconds: Seconds to sleep between profiles. ``0`` disables it.
+
+    Raises:
+        ValueError: If any profile name is not a key in ``SEARCH_PROFILES``.
+    """
+    if not profiles:
+        logger.warning("No profiles configured for multi-profile scout; nothing to do.")
+        return
+
+    # Fail closed: resolve every profile's config before scraping anything so an
+    # unknown name raises here, never after partial scraping has happened.
+    plan = [
+        (
+            profile,
+            get_search_config_for_profile(profile),
+            get_profile_results_limit(profile),
+        )
+        for profile in profiles
+    ]
+
+    logger.info(
+        "Multi-profile scout: %d profile(s) scheduled, cooldown %d seconds",
+        len(profiles),
+        cooldown_seconds,
+    )
+
+    for index, (profile, search_config, results_limit) in enumerate(plan):
+        logger.info(
+            "Multi-profile scout: starting profile '%s' (%d search terms, limit %d)",
+            profile,
+            len(search_config),
+            results_limit,
+        )
+        # Pass the per-profile limit as BOTH JobSpy results_limit and metadata
+        # max_results so the low-volume rule is real across every scraper path
+        # (JobSpy, Computrabajo, OCC), not just JobSpy.
+        run_cloud_extraction_pipeline(
+            search_config,
+            results_limit,
+            metadata_results_limit=results_limit,
+        )
+
+        is_last = index == len(plan) - 1
+        if not is_last and cooldown_seconds > 0:
+            logger.info(
+                "Cooldown %d seconds before next profile ('%s')",
+                cooldown_seconds,
+                profiles[index + 1],
+            )
+            time.sleep(cooldown_seconds)
+
+    logger.info("Multi-profile scout completed: %d profile(s) run.", len(profiles))
 
 
 def run_local_enrichment_pipeline():
