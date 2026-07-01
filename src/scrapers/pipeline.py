@@ -2,6 +2,8 @@
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 from database.models import db_connect, create_tables, Job
@@ -17,6 +19,8 @@ from shared.config import (
 from scrapers.computrabajo_scraper import ComputrabajoScraper
 from scrapers.occ_scraper import OCCScraper
 from shared.config import include_linkedin_today
+from notifications.profiles import get_alert_profile
+from notifications.scoring import DIGEST_KEY_SCORE, score_job
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -293,32 +297,354 @@ def run_multi_profile_cloud_extraction(
     logger.info("Multi-profile scout completed: %d profile(s) run.", len(profiles))
 
 
-def run_local_enrichment_pipeline():
+# ---------------------------------------------------------------------------
+# Local enrichment (Phase 2) -- alert bucket + general bucket
+# ---------------------------------------------------------------------------
+
+# Alert scorer profile name. The Industrial Bajío discovery niche is scraped
+# under SEARCH_PROFILES["industrial_irapuato_bajio"] and scored against the
+# subscriber's CV-informed AlertProfile registered under the same name. Kept as
+# a named constant rather than a magic string so the niche->profile coupling is
+# auditable in one place.
+_ALERT_PROFILE_NAME = "industrial_irapuato_bajio"
+
+
+def _partition_pending_by_bucket(jobs, alert_niche):
+    """Split pending jobs into ``(alert_jobs, general_jobs)`` by industry_niche.
+
+    Pure: no I/O, no DB. Alert jobs carry ``industry_niche == alert_niche``;
+    every other job (different niche, or ``None``) is general. Partitioning in
+    Python instead of two filtered SQL queries makes the exclusion rule
+    trivially correct for NULL niches and lets the split be unit-tested without
+    a database.
+
+    Args:
+        jobs: Iterable of Job-like objects exposing ``industry_niche``.
+        alert_niche: The niche string that defines the alert bucket
+            (e.g. ``"Industrial Bajío"``).
+
+    Returns:
+        ``(alert_jobs, general_jobs)`` as two lists, preserving input order.
     """
-    Runs locally (residential IPs).
-    1. Queries the database using the existing ORM session for ALL records
-       WHERE site IN ('computrabajo','occ') AND status='PENDING_ENRICHMENT'.
-    2. Groups URLs by site.
-    3. ANTI-BAN LOGIC (using ENRICHMENT_CONFIG):
-       - Cap the total records processed per run using `daily_limit`.
-       - Process the URLs in chunks based on `batch_size`.
-       - Apply a time.sleep(`cooldown_seconds`) between chunks.
-       - CIRCUIT BREAKER: If there are `circuit_breaker_threshold` consecutive
-         errors from the SAME site, sleep for `circuit_breaker_sleep` seconds
-         before continuing.
-    4. Calls .enrich_descriptions() for the respective scraper.
-    5. Updates the database using the ORM.
+    alert_jobs = []
+    general_jobs = []
+    for job in jobs:
+        if job.industry_niche == alert_niche:
+            alert_jobs.append(job)
+        else:
+            general_jobs.append(job)
+    return alert_jobs, general_jobs
+
+
+def _split_site_quotas(urls_by_site, daily_limit):
+    """Split ``daily_limit`` evenly between computrabajo and occ (anti-starvation).
+
+    Extracted verbatim from the legacy inline logic so the existing per-site
+    behavior is preserved byte-for-byte and can be unit-tested in isolation.
+    Each site gets ``daily_limit // 2`` slots; if one site has fewer pending
+    records than its half-quota, the unused slots flow to the other site so OCC
+    is never starved when Computrabajo is light (and vice versa).
+
+    Pure: no I/O, deterministic given inputs.
+
+    Args:
+        urls_by_site: Mapping ``site -> list[url]`` (only ``len`` is read).
+        daily_limit: Total slots to split across the two sites.
+
+    Returns:
+        ``{"computrabajo": int, "occ": int}`` with each value clamped to the
+        site's available pending count; the pair never exceeds ``daily_limit``.
+    """
+    ct_count = len(urls_by_site.get("computrabajo", []))
+    occ_count = len(urls_by_site.get("occ", []))
+    half = daily_limit // 2
+
+    quotas = {"computrabajo": min(ct_count, half), "occ": min(occ_count, half)}
+
+    if ct_count < half:
+        quotas["occ"] = min(occ_count, daily_limit - ct_count)
+    elif occ_count < half:
+        quotas["computrabajo"] = min(ct_count, daily_limit - occ_count)
+
+    return quotas
+
+
+def _aware_utc(dt):
+    """Normalize a datetime to timezone-aware UTC.
+
+    ``date_scraped`` comes from a ``DateTime(timezone=True)`` column but may
+    arrive naive depending on the driver/DB. Comparing a naive ``now`` against
+    an aware DB value raises ``TypeError``, so both sides are normalized to
+    aware UTC before any freshness math. ``None`` (missing) maps to the epoch
+    so a job with no scrape date sorts as the oldest possible (stale), which is
+    the safe default for an alert digest that should not surface unknown-age
+    leads first.
+
+    Args:
+        dt: A ``datetime`` (aware or naive) or ``None``.
+
+    Returns:
+        A timezone-aware UTC ``datetime``.
+    """
+    if dt is None:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _rank_alert_jobs(jobs, profile, now, freshness_days):
+    """Rank alert (Industrial Bajío) pending jobs for priority enrichment.
+
+    Ordering, most important first:
+
+    1. **Freshness bucket** -- jobs scraped within ``freshness_days`` of ``now``
+       sort before stale jobs regardless of score, so we never preferentially
+       enrich old leads for a digest that will itself only email recent jobs.
+    2. **CV-informed score descending** -- ``notifications.scoring.score_job``
+       scores title+location against the subscriber profile (``description`` is
+       ``None`` while pending, which is acceptable). Jobs the scorer rejects
+       (wrong city / no role signal) fall back to score 0 so they are still
+       enrichable, just lowest priority within their freshness bucket.
+    3. **date_scraped descending** -- newer jobs first, a secondary recency
+       tiebreaker inside each freshness/score band.
+    4. **id ascending** -- stable, deterministic final tiebreaker so the same
+       pending set always produces the same enrichment order across runs.
+
+    The four criteria are folded into a single ascending sort key using
+    negation for the descending fields, so one stable ``sorted`` call yields the
+    full ordering deterministically.
+
+    Pure: no I/O, no randomness. ``now`` is an explicit parameter so tests are
+    deterministic; production passes ``datetime.now(timezone.utc)``.
+
+    Args:
+        jobs: Iterable of Job-like objects with ``id``, ``title``,
+            ``raw_location``, ``description`` and ``date_scraped``.
+        profile: The subscriber ``AlertProfile`` to score against, or ``None``
+            (then every job gets score 0 and only freshness/recency/id apply).
+        now: Reference ``datetime`` (aware or naive) for the freshness window.
+        freshness_days: Freshness window length in days.
+
+    Returns:
+        A new list of the same job objects in ranked order. Input is never
+        mutated.
+    """
+    aware_now = _aware_utc(now)
+    cutoff = timedelta(days=freshness_days)
+
+    def sort_key(job):
+        scraped = _aware_utc(job.date_scraped)
+        is_fresh = (aware_now - scraped) <= cutoff
+        record = {
+            "title": job.title,
+            "raw_location": job.raw_location,
+            "description": job.description,
+        }
+        score = 0
+        if profile is not None:
+            digest = score_job(record, profile)
+            if digest is not None:
+                score = digest[DIGEST_KEY_SCORE]
+        # Ascending key with negated descending fields:
+        # fresh(0) before stale(1), score desc, date_scraped desc, id asc.
+        return (0 if is_fresh else 1, -score, -scraped.timestamp(), job.id)
+
+    return sorted(jobs, key=sort_key)
+
+
+def _enrich_site_urls(session, site, urls, url_to_job, config):
+    """Enrich one site's URL list in batches, preserving anti-ban behavior.
+
+    Encapsulates the per-site execution shared by the alert and general buckets:
+    a fresh scraper per site, ``batch_size`` chunking, per-batch cooldown, a
+    circuit breaker on consecutive all-fail batches, description/salary/status
+    updates, and per-batch commits. Behavior is identical to the legacy
+    single-bucket loop, factored out so it is reused rather than duplicated.
+
+    Args:
+        session: SQLAlchemy ORM session (commits and status updates).
+        site: ``"computrabajo"`` or ``"occ"``.
+        urls: Ordered list of job URLs for this site (already capped to the
+            site's quota by the caller).
+        url_to_job: Mapping ``job_url -> Job`` for the bucket's pending jobs.
+        config: ``ENRICHMENT_CONFIG`` dict.
+
+    Returns:
+        ``{"enriched": int, "orphaned": int, "processed": int}`` for this site.
+    """
+    batch_size = config["batch_size"]
+    cooldown = config["cooldown_seconds"]
+    circuit_threshold = config["circuit_breaker_threshold"]
+    circuit_sleep = config["circuit_breaker_sleep"]
+
+    scraper = ComputrabajoScraper() if site == "computrabajo" else OCCScraper()
+
+    totals = {"enriched": 0, "orphaned": 0, "processed": 0}
+    consecutive_errors = 0
+
+    for i in range(0, len(urls), batch_size):
+        batch = urls[i:i + batch_size]
+        logger.info(
+            "Enriching %s batch %d/%d (%d URLs)",
+            site,
+            i // batch_size + 1,
+            (len(urls) + batch_size - 1) // batch_size,
+            len(batch),
+        )
+
+        enriched = scraper.enrich_descriptions(batch)
+
+        if not enriched:
+            logger.warning("Empty enrich result for %s batch, skipping", site)
+            totals["processed"] += len(batch)
+            session.commit()
+            if i + batch_size < len(urls):
+                time.sleep(cooldown)
+            continue
+
+        failed_urls = sum(
+            1 for data in enriched.values()
+            if data.get("description") is None
+        )
+
+        for url, data in enriched.items():
+            job = url_to_job.get(url)
+            if not job:
+                continue
+
+            description = data.get("description")
+
+            if description is not None:
+                job.description = description
+                salary_raw = data.get("salary_raw")
+                if salary_raw:
+                    parsed_min, parsed_max = scraper._parse_salary(salary_raw)
+                    if job.salary_min is None and parsed_min is not None:
+                        job.salary_min = parsed_min
+                        job.salary_max = parsed_max
+                job.status = "NEW"
+                totals["enriched"] += 1
+            else:
+                job.status = "ORPHANED"
+                totals["orphaned"] += 1
+
+            job.last_updated = func.now()
+
+        if failed_urls == len(enriched):
+            consecutive_errors += 1
+            logger.warning(
+                "Circuit breaker: %d/%d consecutive all-fail batches for %s",
+                consecutive_errors, circuit_threshold, site,
+            )
+            if consecutive_errors >= circuit_threshold:
+                logger.warning(
+                    "Circuit breaker tripped for %s. Sleeping %d seconds",
+                    site, circuit_sleep,
+                )
+                time.sleep(circuit_sleep)
+                consecutive_errors = 0
+        else:
+            consecutive_errors = 0
+
+        totals["processed"] += len(batch)
+        session.commit()
+
+        if i + batch_size < len(urls):
+            logger.info("Cooldown %d seconds between batches", cooldown)
+            time.sleep(cooldown)
+
+    return totals
+
+
+def _enrich_bucket(session, jobs, daily_limit, config, bucket_label):
+    """Enrich one bucket (alert or general) up to ``daily_limit``.
+
+    Groups the bucket's jobs by site, splits ``daily_limit`` across the two
+    sites with the anti-starvation rule (:func:`_split_site_quotas`), then runs
+    the shared per-site execution (:func:`_enrich_site_urls`) for each site that
+    has pending work. The input order of ``jobs`` is preserved within each
+    site's selected URL slice, so for the alert bucket the
+    freshness/score/recency ranking drives which jobs fill each site's quota.
+
+    Args:
+        session: SQLAlchemy ORM session.
+        jobs: Ordered list of pending Job objects for this bucket (ranked for
+            the alert bucket, query order for the general bucket).
+        daily_limit: Per-bucket daily cap (alert or general).
+        config: ``ENRICHMENT_CONFIG`` dict.
+        bucket_label: Human-readable label for log lines (e.g. ``"Alert"``).
+
+    Returns:
+        ``{"enriched": int, "orphaned": int, "processed": int}`` for the bucket.
+    """
+    if not jobs:
+        logger.info("No %s PENDING_ENRICHMENT records. Nothing to do.", bucket_label)
+        return {"enriched": 0, "orphaned": 0, "processed": 0}
+
+    logger.info("Found %d %s records pending enrichment", len(jobs), bucket_label)
+
+    url_to_job = {job.job_url: job for job in jobs}
+    urls_by_site = {}
+    for job in jobs:
+        urls_by_site.setdefault(job.site, []).append(job.job_url)
+
+    quotas = _split_site_quotas(urls_by_site, daily_limit)
+    logger.info(
+        "%s quotas: Computrabajo %d, OCC %d (limit %d)",
+        bucket_label, quotas["computrabajo"], quotas["occ"], daily_limit,
+    )
+
+    totals = {"enriched": 0, "orphaned": 0, "processed": 0}
+    for site in ["computrabajo", "occ"]:
+        if site not in urls_by_site:
+            continue
+
+        quota = quotas[site]
+        if quota <= 0:
+            logger.info("Quota exhausted for %s, skipping", site)
+            continue
+
+        urls = urls_by_site[site][:quota]
+        counts = _enrich_site_urls(session, site, urls, url_to_job, config)
+        for key in totals:
+            totals[key] += counts[key]
+
+    return totals
+
+
+def run_local_enrichment_pipeline():
+    """Run Phase 2 local enrichment from residential IPs in two buckets.
+
+    The run splits into an ALERT bucket and a GENERAL bucket that share the same
+    per-site quota/cooldown/circuit-breaker execution but are otherwise
+    independent:
+
+    1. **ALERT bucket** -- ``Industrial Bajío`` pending OCC/Computrabajo rows,
+       ranked by a freshness-aware CV-informed ordering, capped at
+       ``alert_daily_limit`` (default 20). Runs FIRST because it feeds a later
+       daily email and is small, so it must not be starved by the general bucket.
+    2. **GENERAL bucket** -- every other pending OCC/Computrabajo row (tech plus
+       any non-alert niche), capped at ``daily_limit`` (default 100). Excludes
+       the alert niche, so no job is processed by both buckets and the total
+       never exceeds ``alert_daily_limit + daily_limit``.
+
+    A single query fetches all pending OCC/Computrabajo rows and partitions them
+    in Python; each bucket then applies its own anti-starvation per-site quota
+    split. Industrial jobs are the alert bucket's exclusive responsibility:
+    leftover industrial jobs beyond the 20/day cap stay PENDING_ENRICHMENT for
+    the next run rather than spilling into the general bucket, keeping the alert
+    cap honest and avoiding a stale backlog of enriched-but-never-emailed rows.
     """
     engine = db_connect()
     Session = sessionmaker(bind=engine)
     session = Session()
 
     config = ENRICHMENT_CONFIG
-    daily_limit = config["daily_limit"]
-    batch_size = config["batch_size"]
-    cooldown = config["cooldown_seconds"]
-    circuit_threshold = config["circuit_breaker_threshold"]
-    circuit_sleep = config["circuit_breaker_sleep"]
+    alert_niche = config["alert_niche"]
+    alert_limit = config["alert_daily_limit"]
+    general_limit = config["daily_limit"]
+    freshness_days = config["alert_freshness_days"]
 
     try:
         pending = session.query(Job).filter(
@@ -332,125 +658,32 @@ def run_local_enrichment_pipeline():
 
         logger.info("Found %d records pending enrichment", len(pending))
 
-        urls_by_site = {}
-        for job in pending:
-            urls_by_site.setdefault(job.site, []).append(job.job_url)
+        alert_jobs, general_jobs = _partition_pending_by_bucket(pending, alert_niche)
 
-        url_to_job = {job.job_url: job for job in pending}
+        # Resolve the alert scorer profile once. A missing profile degrades
+        # gracefully: ranking falls back to score 0 for every job (freshness /
+        # recency / id still order the bucket) instead of crashing enrichment.
+        alert_profile = get_alert_profile(_ALERT_PROFILE_NAME)
+        if alert_profile is None:
+            logger.warning(
+                "Alert profile '%s' not found; ranking by freshness/recency only.",
+                _ALERT_PROFILE_NAME,
+            )
 
-        total_enriched = 0
-        total_orphaned = 0
-        total_processed = 0
-
-        # Split daily limit evenly between both sites so OCC does not starve.
-        # If one site has fewer pending records than its half-quota,
-        # the unused slots go to the other site.
-        ct_count = len(urls_by_site.get("computrabajo", []))
-        occ_count = len(urls_by_site.get("occ", []))
-        half = daily_limit // 2
-
-        quotas = {}
-        quotas["computrabajo"] = min(ct_count, half)
-        quotas["occ"] = min(occ_count, half)
-
-        if ct_count < half:
-            quotas["occ"] = min(occ_count, daily_limit - ct_count)
-        elif occ_count < half:
-            quotas["computrabajo"] = min(ct_count, daily_limit - occ_count)
-
-        logger.info(
-            "Enrichment quotas: Computrabajo %d, OCC %d (limit %d)",
-            quotas["computrabajo"], quotas["occ"], daily_limit,
+        # Alert bucket runs FIRST so the user-facing digest candidates are
+        # enriched before the larger general bucket consumes scrape quota.
+        ranked_alert = _rank_alert_jobs(
+            alert_jobs, alert_profile, datetime.now(timezone.utc), freshness_days
+        )
+        alert_counts = _enrich_bucket(
+            session, ranked_alert, alert_limit, config, "Alert"
         )
 
-        for site in ["computrabajo", "occ"]:
-            if site not in urls_by_site:
-                continue
-
-            quota = quotas[site]
-            if quota <= 0:
-                logger.info("Quota exhausted for %s, skipping", site)
-                continue
-
-            urls = urls_by_site[site][:quota]
-
-            if site == "computrabajo":
-                scraper = ComputrabajoScraper()
-            else:
-                scraper = OCCScraper()
-
-            consecutive_errors = 0
-
-            for i in range(0, len(urls), batch_size):
-                batch = urls[i:i + batch_size]
-                logger.info(
-                    "Enriching %s batch %d/%d (%d URLs)",
-                    site,
-                    i // batch_size + 1,
-                    (len(urls) + batch_size - 1) // batch_size,
-                    len(batch),
-                )
-
-                enriched = scraper.enrich_descriptions(batch)
-
-                if not enriched:
-                    logger.warning("Empty enrich result for %s batch, skipping", site)
-                    total_processed += len(batch)
-                    session.commit()
-                    if i + batch_size < len(urls):
-                        time.sleep(cooldown)
-                    continue
-
-                failed_urls = sum(
-                    1 for data in enriched.values()
-                    if data.get("description") is None
-                )
-
-                for url, data in enriched.items():
-                    job = url_to_job.get(url)
-                    if not job:
-                        continue
-
-                    description = data.get("description")
-
-                    if description is not None:
-                        job.description = description
-                        salary_raw = data.get("salary_raw")
-                        if salary_raw:
-                            parsed_min, parsed_max = scraper._parse_salary(salary_raw)
-                            if job.salary_min is None and parsed_min is not None:
-                                job.salary_min = parsed_min
-                                job.salary_max = parsed_max
-                        job.status = "NEW"
-                        total_enriched += 1
-                    else:
-                        job.status = "ORPHANED"
-                        total_orphaned += 1
-
-                    job.last_updated = func.now()
-
-                if failed_urls == len(enriched):
-                    consecutive_errors += 1
-                    logger.warning(
-                        "Circuit breaker: %d/%d consecutive all-fail batches for %s",
-                        consecutive_errors, circuit_threshold, site,
-                    )
-                    if consecutive_errors >= circuit_threshold:
-                        logger.warning(
-                            "Circuit breaker tripped for %s. Sleeping %d seconds",
-                            site, circuit_sleep,
-                        )
-                        time.sleep(circuit_sleep)
-                        consecutive_errors = 0
-                else:
-                    consecutive_errors = 0
-
-                total_processed += len(batch)
-                session.commit()
-
-                if i + batch_size < len(urls):
-                    logger.info("Cooldown %d seconds between batches", cooldown)
-                    time.sleep(cooldown)
+        # General bucket excludes the alert niche (partitioned above), so the
+        # same job is never enriched twice and total <= alert_limit + general_limit.
+        general_counts = _enrich_bucket(
+            session, general_jobs, general_limit, config, "General"
+        )
 
         remaining_pending = session.query(Job).filter(
             Job.site.in_(["computrabajo", "occ"]),
@@ -458,8 +691,11 @@ def run_local_enrichment_pipeline():
         ).count()
 
         logger.info(
-            "Enrichment summary — Total enriched: %d, ORPHANED: %d, Remaining PENDING_ENRICHMENT: %d",
-            total_enriched, total_orphaned, remaining_pending,
+            "Enrichment summary — Alert: enriched %d, ORPHANED %d | "
+            "General: enriched %d, ORPHANED %d | Remaining PENDING_ENRICHMENT: %d",
+            alert_counts["enriched"], alert_counts["orphaned"],
+            general_counts["enriched"], general_counts["orphaned"],
+            remaining_pending,
         )
 
     except Exception as error:

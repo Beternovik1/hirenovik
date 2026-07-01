@@ -312,8 +312,42 @@ NEW_SCRAPERS_CONFIG = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Alert enrichment bucket (Industrial Bajío "brother" profile)
+# ---------------------------------------------------------------------------
+# The local enrichment run now splits into two independent buckets that share
+# the same per-site quota/cooldown/circuit-breaker execution logic but NOT the
+# same daily cap or candidate set:
+#
+#   1. ALERT bucket  -- up to ALERT_ENRICHMENT_LIMIT Industrial Bajío pending
+#                       OCC/Computrabajo descriptions per day, RANKED by a
+#                       freshness-aware CV-informed ordering, runs FIRST.
+#   2. GENERAL bucket -- up to DAILY_ENRICHMENT_LIMIT (100) general pending
+#                        OCC/Computrabajo descriptions per day, EXCLUDING the
+#                        alert niche so the same job is never processed twice.
+#
+# Alert runs first because it is user-facing (a later daily email consumes the
+# described industrial jobs) and only 20/day, so it must not be starved by the
+# larger 100/day general bucket. Industrial jobs are the alert bucket's
+# exclusive responsibility: leftover industrial jobs beyond the 20/day cap stay
+# PENDING_ENRICHMENT for the next run rather than spilling into the general
+# bucket, which keeps the alert cap honest and avoids building a stale backlog
+# of enriched-but-never-emailed industrial rows.
+ALERT_ENRICHMENT_LIMIT = int(os.getenv("ALERT_ENRICHMENT_LIMIT", "20"))
+ALERT_ENRICHMENT_NICHE = os.getenv("ALERT_ENRICHMENT_NICHE", "Industrial Bajío")
+
+# Freshness window used by the alert ranking. A job is "fresh" when its
+# date_scraped is within this many days of the run time. Fresh jobs sort before
+# stale jobs regardless of score, so we never preferentially enrich old leads
+# for a digest that will itself only email recent jobs. Mirrors the future email
+# digest rule (status='NEW', description present, recent date_scraped window).
+ALERT_FRESHNESS_DAYS = int(os.getenv("ALERT_FRESHNESS_DAYS", "5"))
+
 ENRICHMENT_CONFIG = {
     "daily_limit": int(os.getenv("DAILY_ENRICHMENT_LIMIT", "100")),
+    "alert_daily_limit": ALERT_ENRICHMENT_LIMIT,
+    "alert_niche": ALERT_ENRICHMENT_NICHE,
+    "alert_freshness_days": ALERT_FRESHNESS_DAYS,
     "batch_size": int(os.getenv("ENRICHMENT_BATCH_SIZE", "20")),
     "cooldown_seconds": int(os.getenv("ENRICHMENT_COOLDOWN", "60")),
     "circuit_breaker_threshold": 3,
