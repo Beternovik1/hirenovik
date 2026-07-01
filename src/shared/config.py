@@ -353,3 +353,25 @@ ENRICHMENT_CONFIG = {
     "circuit_breaker_threshold": 3,
     "circuit_breaker_sleep": 300,
 }
+
+
+# ---------------------------------------------------------------------------
+# Alert digest selection (Industrial Bajío daily digest)
+# ---------------------------------------------------------------------------
+# The digest selector decides WHICH described Industrial Bajío jobs are worth
+# sending in a daily email, and composes a serializable payload for a future
+# renderer/sender. It deliberately reuses the alert niche and freshness window
+# so the digest and the enrichment queue share ONE product definition of "recent
+# Industrial Bajío job": a job the enrichment bucket enriched (status NEW,
+# description present, within ALERT_FRESHNESS_DAYS) is exactly the candidate set
+# the digest selects from. Only the digest-specific cap (default 10) and the
+# scoring profile name are new knobs here, avoiding duplicated constants.
+ALERT_DIGEST_LIMIT = int(os.getenv("ALERT_DIGEST_LIMIT", "10"))
+ALERT_DIGEST_PROFILE = os.getenv("ALERT_DIGEST_PROFILE", "industrial_irapuato_bajio")
+
+ALERT_DIGEST_CONFIG = {
+    "limit": ALERT_DIGEST_LIMIT,
+    "niche": ALERT_ENRICHMENT_NICHE,
+    "freshness_days": ALERT_FRESHNESS_DAYS,
+    "profile": ALERT_DIGEST_PROFILE,
+}
