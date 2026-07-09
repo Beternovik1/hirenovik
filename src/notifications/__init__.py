@@ -5,8 +5,10 @@ alert profiles (:mod:`notifications.profiles`), a pure deterministic binary
 matcher (:mod:`notifications.matcher`), a CV-informed scorer with human-readable
 reasons (:mod:`notifications.scoring`), and a deterministic digest selector that
 composes a serializable payload of the top jobs to send
-(:mod:`notifications.digest`). Email sending, notification logging, and HTML
-rendering are intentionally out of scope for these slices.
+(:mod:`notifications.digest`). The package also renders that payload into an
+email-client-friendly HTML body (:mod:`notifications.html_renderer`). Email
+sending and notification logging remain intentionally out of scope for these
+slices.
 
 The package itself stays free of database/SQLAlchemy imports so importing
 ``notifications`` never pulls in the ORM. The DB-facing digest retrieval lives
@@ -25,6 +27,7 @@ from notifications.digest import (
     payload_to_dict,
     select_digest,
 )
+from notifications.html_renderer import render_digest_html
 from notifications.matcher import match_job, match_jobs
 from notifications.profiles import (
     ALERT_PROFILES,
@@ -52,6 +55,7 @@ __all__ = [
     "match_job",
     "match_jobs",
     "payload_to_dict",
+    "render_digest_html",
     "score_job",
     "score_jobs",
     "select_digest",
