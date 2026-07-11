@@ -29,8 +29,11 @@ STATE_HOMONYMOUS_CITIES: frozenset[str] = frozenset({"guanajuato"})
 # When a location carries a state suffix (text after the first comma), it must
 # match one of these or the job is rejected regardless of the city token.
 # "guanajuato" covers "Guanajuato" / "Guanajuato, Mexico"; "gto" covers
-# "Gto." / "GTO" / "Gto".
-GUANAJUATO_STATE_TOKENS: frozenset[str] = frozenset({"guanajuato", "gto"})
+# "Gto." / "GTO" / "Gto"; "gua" covers the Indeed-published abbreviation
+# "GUA" (e.g. "Celaya, GUA, MX"). Tokenizing on letters only (see
+# `_is_guanajuato_state_suffix`) keeps "gua" from leaking into "guadalajara",
+# which is a single word token, not "gua" followed by anything.
+GUANAJUATO_STATE_TOKENS: frozenset[str] = frozenset({"guanajuato", "gto", "gua"})
 
 # Include/reject keywords that must match on word boundaries rather than as bare
 # substrings. These are short, high-risk CV tokens curated by auditing each
@@ -113,8 +116,10 @@ def _is_guanajuato_state_suffix(suffix: str) -> bool:
     """Return True if a state suffix indicates the Guanajuato/Bajio target.
 
     Accepts full and abbreviated forms after accent-folding and lowercasing,
-    e.g. "Guanajuato", "Gto.", "GTO", and "Guanajuato, Mexico". Punctuation is
-    ignored by tokenizing on letters only.
+    e.g. "Guanajuato", "Gto.", "GTO", "GUA" (Indeed abbreviation), and
+    "Guanajuato, Mexico". Punctuation is ignored by tokenizing on letters only,
+    so "GUA" matches as its own word but does not leak into "Guadalajara" (a
+    single token).
 
     Args:
         suffix: Raw or normalized text after the first comma of a location.
@@ -209,6 +214,34 @@ def _matches_keywords(
         if _keyword_in_text(keyword, text):
             return keyword
     return None
+
+
+def matches_alert_geography(raw_location: Any, allowed_cities: tuple[str, ...]) -> bool:
+    """Return True if ``raw_location`` falls inside the alert geography.
+
+    Normalizes ``raw_location`` (accent-fold + lowercase, NaN-safe) and then
+    delegates to :func:`_matches_location`, so this function accepts exactly the
+    same location strings the alert matcher accepts downstream (e.g.
+    ``"Celaya, GUA, MX"``, ``"León, Guanajuato"``) and rejects the same
+    out-of-geography ones (e.g. ``"Tizayuca, Hidalgo"``, ``"Leon, Nuevo Leon"``).
+
+    Exposed as a public entry point so the Phase 1 OCC insert pipeline can drop
+    national OCC rows outside the alert geography without re-implementing the
+    city/state-suffix rules. The semantics stay identical across the insert
+    filter (Phase 1) and the digest matcher (Phase 2), so a row that survives
+    the insert filter is guaranteed to survive the matcher's geography gate too.
+
+    Args:
+        raw_location: A raw location string (possibly ``None`` / NaN) as produced
+            by the scrapers' ``raw_location`` column.
+        allowed_cities: Accent-folded lowercase city tokens defining the alert
+            geography (typically an :class:`AlertProfile`'s ``allowed_cities``).
+
+    Returns:
+        ``True`` when the location is inside the alert geography.
+    """
+    normalized = _normalize(raw_location)
+    return _matches_location(normalized, allowed_cities) is not None
 
 
 def match_job(record: dict, profile: AlertProfile) -> dict | None:

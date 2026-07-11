@@ -83,9 +83,14 @@ def make_job(
     )
 
 
-def make_payload(jobs, count=None):
-    """Build a DigestPayload from a list of DigestJob, preserving order."""
+def make_payload(jobs, count=None, fallback_jobs=None):
+    """Build a DigestPayload from a list of DigestJob, preserving order.
+
+    ``fallback_jobs`` defaults to empty so existing primary-only tests are
+    unaffected; pass a list to exercise the secondary section rendering.
+    """
     jobs_tuple = tuple(jobs)
+    fallback_tuple = tuple(fallback_jobs) if fallback_jobs is not None else ()
     return DigestPayload(
         profile_name=PROFILE,
         niche=NICHE,
@@ -94,6 +99,7 @@ def make_payload(jobs, count=None):
         limit=10,
         count=len(jobs) if count is None else count,
         jobs=jobs_tuple,
+        fallback_jobs=fallback_tuple,
     )
 
 
@@ -153,6 +159,153 @@ class TestEmptyDigest:
         html = render_digest_html(make_payload([]))
         assert html.startswith("<!DOCTYPE html>")
         assert html.endswith("</html>")
+
+
+# ---------------------------------------------------------------------------
+# Secondary fallback section ("Other nearby options you may want to review")
+# ---------------------------------------------------------------------------
+
+
+FALLBACK_HEADING = "Other nearby options you may want to review"
+
+
+class TestFallbackSectionRendering:
+    """The secondary tier renders under a distinct heading ONLY when non-empty."""
+
+    def test_fallback_heading_renders_when_fallback_present(self):
+        payload = make_payload(
+            [make_job(job_id=1, title="Primary Job")],
+            fallback_jobs=[make_job(job_id=2, title="Fallback Job")],
+        )
+        html = render_digest_html(payload)
+
+        assert FALLBACK_HEADING in html
+        # Both the primary and the fallback card appear.
+        assert "Primary Job" in html
+        assert "Fallback Job" in html
+        # The fallback section comes AFTER the primary card.
+        assert html.index("Primary Job") < html.index(FALLBACK_HEADING)
+        assert html.index(FALLBACK_HEADING) < html.index("Fallback Job")
+
+    def test_fallback_heading_omitted_when_no_fallback(self):
+        """A primary-only digest must look exactly as before: no secondary
+        heading leaks into the document."""
+        payload = make_payload([make_job(job_id=1, title="Primary Job")])
+        html = render_digest_html(payload)
+
+        assert FALLBACK_HEADING not in html
+
+    def test_fallback_heading_omitted_when_payload_totally_empty(self):
+        """An empty digest renders the no-jobs state, never the heading."""
+        html = render_digest_html(make_payload([]))
+
+        assert FALLBACK_HEADING not in html
+        assert "No new jobs matched your alert profile today." in html
+
+    def test_fallback_only_no_primary_renders_section_without_empty_state(self):
+        """When primary is empty but fallback exists, jobs DID match (at lower
+        confidence), so the friendly no-jobs state must NOT appear -- only the
+        fallback section renders under its heading."""
+        payload = make_payload(
+            [], fallback_jobs=[make_job(job_id=5, title="Fallback Only")]
+        )
+        html = render_digest_html(payload)
+
+        assert FALLBACK_HEADING in html
+        assert "Fallback Only" in html
+        assert "No new jobs matched your alert profile today." not in html
+
+    def test_fallback_cards_render_in_payload_order_not_resorted(self):
+        """Selector order is preserved for the fallback tier exactly as for
+        primary: the renderer never re-sorts."""
+        fallback = [
+            make_job(job_id=30, title="FB Three", score=10),
+            make_job(job_id=10, title="FB One", score=200),
+        ]
+        payload = make_payload([], fallback_jobs=fallback)
+        html = render_digest_html(payload)
+
+        pos_three = html.index("FB Three")
+        pos_one = html.index("FB One")
+        assert pos_three < pos_one, "renderer must preserve fallback payload order"
+
+    def test_headline_reports_total_count_with_fallback(self):
+        """The H1 and subject report the TOTAL (primary + fallback) so the
+        inbox preview matches the email body."""
+        payload = make_payload(
+            [make_job(job_id=1), make_job(job_id=2)],
+            fallback_jobs=[
+                make_job(job_id=3),
+                make_job(job_id=4),
+                make_job(job_id=5),
+            ],
+        )
+        html = render_digest_html(payload)
+
+        assert "Industrial Bajio job digest (5 new)" in html
+        assert "Industrial Bajio digest: 5 new job(s)" in html  # <title> subject
+
+    def test_headline_total_when_primary_only_still_matches_count(self):
+        """With no fallback, total == primary count, so the headline is
+        unchanged from the pre-fallback behavior."""
+        payload = make_payload([make_job(job_id=1)])
+        html = render_digest_html(payload)
+
+        assert "Industrial Bajio job digest (1 new)" in html
+
+    def test_subtitle_shows_split_when_fallback_present(self):
+        payload = make_payload(
+            [make_job(job_id=1), make_job(job_id=2)],
+            fallback_jobs=[make_job(job_id=3), make_job(job_id=4)],
+        )
+        html = render_digest_html(payload)
+
+        assert "4 job(s)" in html
+        assert "2 top matches + 2 nearby options" in html
+
+    def test_subtitle_no_split_when_no_fallback(self):
+        payload = make_payload([make_job(job_id=1)])
+        html = render_digest_html(payload)
+
+        assert "1 job(s)" in html
+        assert "top matches" not in html
+        assert "nearby options" not in html
+
+    def test_fallback_heading_is_exact_product_label(self):
+        """The heading text is a fixed product label; assert it verbatim so an
+        accidental rephrase is caught."""
+        payload = make_payload(
+            [make_job(job_id=1)], fallback_jobs=[make_job(job_id=2)]
+        )
+        html = render_digest_html(payload)
+
+        assert FALLBACK_HEADING in html
+
+    def test_malicious_fallback_title_is_escaped(self):
+        """The secondary tier reuses the primary card renderer, so untrusted
+        fallback text is escaped exactly like primary text."""
+        payload = make_payload(
+            [make_job(job_id=1)],
+            fallback_jobs=[make_job(job_id=2, title="<script>alert(1)</script>")],
+        )
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "<script>alert(1)</script>" not in body
+        assert "&lt;script&gt;" in html
+
+    def test_fallback_section_has_multiple_cards(self):
+        fallback = [
+            make_job(job_id=10, title="FB A"),
+            make_job(job_id=11, title="FB B"),
+        ]
+        payload = make_payload(
+            [make_job(job_id=1, title="Primary")], fallback_jobs=fallback
+        )
+        html = render_digest_html(payload)
+
+        # One primary card + two fallback cards = three articles total.
+        assert html.count('<article style="') == 3
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +397,17 @@ class TestUrlSafety:
 
         assert 'href="https://example.com/job/1"' in html
         assert "View posting" in html
+        # New-tab safety: opens in a new tab without leaking window.opener.
+        assert 'target="_blank"' in html
+        assert 'rel="noopener noreferrer"' in html
 
     def test_safe_http_url_renders_as_clickable_link(self):
         payload = make_payload([make_job(job_url="http://example.com/job/1")])
         html = render_digest_html(payload)
 
         assert 'href="http://example.com/job/1"' in html
+        assert 'target="_blank"' in html
+        assert 'rel="noopener noreferrer"' in html
 
     def test_javascript_scheme_url_renders_as_text_not_link(self):
         payload = make_payload([make_job(job_url="javascript:alert(1)")])
@@ -314,13 +472,196 @@ class TestUrlSafety:
         assert "(no link available)" in body or "http://[::1" in html
 
     def test_unparseable_url_with_other_malformation_does_not_crash(self):
-        # A second malformed shape: a malformed port that crashes some parsers
-        # is treated the same way -- degrade to text, never crash.
+        # Regression: a malformed URL with whitespace in the host and a
+        # non-numeric port ("http://exa mple.com:abc") must degrade to plain
+        # text. urlsplit parses it without raising, so _safe_url must reject it
+        # explicitly -- it can never become a clickable href.
         payload = make_payload([make_job(job_url="http://exa mple.com:abc")])
         html = render_digest_html(payload)
 
-        # Either way (parseable-but-bad or unparseable), no clickable href.
-        assert "View posting" in html or 'href="http://exa' not in html
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://exa' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_whitespace_in_host_is_not_clickable(self):
+        # Regression: urlsplit is permissive with "http://exa mple.com" -- it
+        # keeps the embedded space, so the host is malformed. Such a link must
+        # never render as an active href.
+        payload = make_payload([make_job(job_url="http://exa mple.com")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://exa' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_invalid_port_is_not_clickable(self):
+        # Regression: a non-numeric port (":abc") parses but is invalid; the
+        # link must degrade to plain text, not a clickable href.
+        payload = make_payload([make_job(job_url="http://example.com:abc")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://example.com:abc"' not in body
+
+    def test_url_with_tab_or_newline_is_not_clickable(self):
+        # Control characters can obfuscate a URL from human review. They must
+        # never survive into a clickable href.
+        payload = make_payload([make_job(job_url="http://example\t.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http' not in body
+
+    def test_valid_http_url_with_explicit_port_still_clickable(self):
+        # A normal numeric port must remain clickable after the hardening so
+        # the rejection logic does not over-broaden safe links.
+        payload = make_payload([make_job(job_url="https://example.com:8443/job/1")])
+        html = render_digest_html(payload)
+
+        assert 'href="https://example.com:8443/job/1"' in html
+        assert "View posting" in html
+        assert 'target="_blank"' in html
+        assert 'rel="noopener noreferrer"' in html
+
+    def test_url_with_unicode_nbsp_in_host_is_not_clickable(self):
+        # Regression: a non-breaking space (U+00A0) inside the host defeats
+        # the ASCII-only whitespace guard. ``urlsplit`` keeps it verbatim, so
+        # the link must be rejected to avoid a broken/crafted clickable href.
+        payload = make_payload([make_job(job_url="http://exa\u00a0mple.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://exa' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_unicode_line_separator_in_path_is_not_clickable(self):
+        # U+2028 (LINE SEPARATOR) in the path is a Unicode separator that
+        # ASCII-only rejection misses. It must not survive into an href.
+        payload = make_payload([make_job(job_url="http://example.com/jo\u2028b")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://example.com/jo' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_c1_next_line_control_is_not_clickable(self):
+        # U+0085 (NEL, a C1 control) is not ASCII whitespace but breaks hrefs
+        # and can obfuscate a URL from human review. Reject it.
+        payload = make_payload([make_job(job_url="http://example.com/jo\x85b")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http://example.com/jo' not in body
+        assert 'href="http' not in body
+
+    def test_safe_url_remains_clickable_after_unicode_hardening(self):
+        # Actual unicode in the payload alarming path (raised test): assert a
+        # normal ASCII http(s) URL survives the unicode-aware check so the
+        # broader category guard does not reject safe links.
+        payload = make_payload([make_job(job_url="https://example.com/job/1")])
+        html = render_digest_html(payload)
+
+        assert 'href="https://example.com/job/1"' in html
+        assert "View posting" in html
+        assert 'target="_blank"' in html
+        assert 'rel="noopener noreferrer"' in html
+
+    def test_url_with_leading_ascii_space_is_not_clickable(self):
+        # Regression: ``_safe_url`` used to ``strip()`` before the unsafe-char
+        # check, so a leading ASCII space was removed and the otherwise-valid
+        # link rendered as clickable. Boundary whitespace must be rejected on
+        # the raw input; the link degrades to plain text.
+        payload = make_payload([make_job(job_url=" https://example.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_trailing_ascii_space_is_not_clickable(self):
+        # Regression: trailing ASCII space was trimmed away before the sanitizer
+        # saw it, yielding a clickable href. The raw boundary char must be
+        # rejected so the malformed link stays plain text.
+        payload = make_payload([make_job(job_url="https://example.com/job ")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_leading_and_trailing_ascii_space_is_not_clickable(self):
+        # Regression: both boundaries trimmed -> clickable. Reject on the raw
+        # input so the obfuscated link never becomes an active href.
+        payload = make_payload([make_job(job_url=" https://example.com/job ")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_leading_unicode_nbsp_is_not_clickable(self):
+        # Regression: U+00A0 (NO-BREAK SPACE) is Unicode whitespace that
+        # ``str.strip`` removes from the boundary, so a leading NBSP used to be
+        # hidden from the sanitizer and the link rendered clickable. The raw
+        # input must be rejected.
+        payload = make_payload([make_job(job_url="\u00a0https://example.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_leading_unicode_line_separator_is_not_clickable(self):
+        # Regression: U+2028 (LINE SEPARATOR) is a Unicode separator that
+        # ``str.strip`` removes from the boundary. A leading U+2028 was trimmed
+        # away before the unsafe-char check, leaving a clickable href. Reject
+        # the raw input.
+        payload = make_payload([make_job(job_url="\u2028https://example.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_url_with_leading_c1_next_line_control_is_not_clickable(self):
+        # Regression: U+0085 (NEL, a C1 control) is treated as whitespace by
+        # ``str.strip`` and was removed from the boundary before the sanitizer
+        # ran, so the link rendered clickable. The raw control char must be
+        # rejected.
+        payload = make_payload([make_job(job_url="\x85https://example.com/job")])
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="https://example.com/job"' not in body
+        assert 'href="http' not in body
+
+    def test_whitespace_only_url_is_not_clickable_and_does_not_crash(self):
+        # Preserve contract: empty/whitespace-only URLs stay non-clickable
+        # without raising. The raw unsafe-char check rejects ASCII whitespace,
+        # so a whitespace-only value degrades to plain text rather than reaching
+        # the parser. (The "(no link available)" fallback only fires for an
+        # empty/None URL; a whitespace-only value is truthy and renders as
+        # escaped plain text -- still never a clickable href.)
+        payload = make_payload([make_job(job_url="   ")])
+        # Must not raise.
+        html = render_digest_html(payload)
+
+        body = html.split("<body>")[1].split("</body>")[0]
+        assert "View posting" not in body
+        assert 'href="http' not in body
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +890,75 @@ class TestTypeGuard:
     def test_non_payload_raises_type_error(self):
         with pytest.raises(TypeError, match="DigestPayload"):
             render_digest_html({"jobs": []})  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# New-tab link behavior
+# ---------------------------------------------------------------------------
+
+
+class TestNewTabLinks:
+    def test_safe_link_has_target_blank_and_rel_noopener(self):
+        payload = make_payload([make_job(job_url="https://example.com/job/1")])
+        html = render_digest_html(payload)
+
+        assert 'target="_blank"' in html
+        assert 'rel="noopener noreferrer"' in html
+        assert 'href="https://example.com/job/1"' in html
+
+    def test_unsafe_link_does_not_get_target_blank(self):
+        # Unsafe URLs degrade to plain text and must NOT carry target/rel.
+        payload = make_payload([make_job(job_url="javascript:alert(1)")])
+        html = render_digest_html(payload)
+
+        assert 'target="_blank"' not in html
+        assert 'rel="noopener noreferrer"' not in html
+        assert "View posting" not in html
+
+    def test_missing_url_does_not_get_target_blank(self):
+        payload = make_payload([make_job(job_url="")])
+        html = render_digest_html(payload)
+
+        assert 'target="_blank"' not in html
+        assert "View posting" not in html
+
+
+# ---------------------------------------------------------------------------
+# NaN salary regression
+# ---------------------------------------------------------------------------
+
+
+class TestNanSalaryRegression:
+    """A NaN salary must NEVER render as 'nan' in the digest HTML.
+
+    Regression: Decimal('NaN') from the DB was passing through _opt_float as a
+    float nan and the renderer formatted it as 'Salary MXN nan - nan'.
+    """
+
+    def test_nan_min_salary_does_not_render_nan(self):
+        # At the renderer boundary, a NaN should already be None (digest._opt_float
+        # normalizes it). We assert the renderer treats a None min as absent for
+        # the min-only path so 'nan' never appears.
+        import math
+
+        payload = make_payload([make_job(salary_min=math.nan, salary_max=None)])
+        html = render_digest_html(payload)
+
+        assert "nan" not in html.lower()
+
+    def test_nan_max_salary_does_not_render_nan(self):
+        import math
+
+        payload = make_payload([make_job(salary_min=None, salary_max=math.nan)])
+        html = render_digest_html(payload)
+
+        assert "nan" not in html.lower()
+
+    def test_both_nan_salaries_render_no_salary_line(self):
+        import math
+
+        payload = make_payload([make_job(salary_min=math.nan, salary_max=math.nan)])
+        html = render_digest_html(payload)
+
+        assert "nan" not in html.lower()
+        assert "Salary" not in html
