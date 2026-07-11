@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from database.models import Job
 from notifications.digest import (
+    DIGEST_DEFAULT_FALLBACK_LIMIT,
     DIGEST_DEFAULT_FRESHNESS_DAYS,
     DIGEST_DEFAULT_LIMIT,
     DIGEST_NICHE,
@@ -90,13 +91,16 @@ def build_digest(
     niche: str = DIGEST_NICHE,
     freshness_days: int = DIGEST_DEFAULT_FRESHNESS_DAYS,
     limit: int = DIGEST_DEFAULT_LIMIT,
+    fallback_limit: int = DIGEST_DEFAULT_FALLBACK_LIMIT,
 ) -> DigestPayload:
     """Fetch digest candidates from the DB and build the ranked digest payload.
 
     End-to-end DB-facing entry point: queries NEW Industrial Bajío jobs with a
     non-empty description and a coarse freshness lower bound, then delegates the
     exact eligibility (freshness + CV-fit), ranking, and payload composition to
-    :func:`select_digest`.
+    :func:`select_digest`. Both the primary cap (``limit``) and the secondary
+    fallback cap (``fallback_limit``) are forwarded so the DB path stays
+    configurable alongside the pure selector.
 
     Args:
         session: SQLAlchemy ORM session.
@@ -107,10 +111,13 @@ def build_digest(
             registered under :data:`DIGEST_PROFILE_NAME`.
         niche: Industry niche to scope the digest to.
         freshness_days: Hard freshness cutoff in days.
-        limit: Maximum jobs to return.
+        limit: Maximum PRIMARY jobs to return.
+        fallback_limit: Maximum SECONDARY (fallback) jobs to return. Set to 0 to
+            disable the secondary section.
 
     Returns:
-        A :class:`DigestPayload` with the ranked selected jobs.
+        A :class:`DigestPayload` with the ranked selected primary jobs and the
+        lower-confidence fallback jobs.
 
     Raises:
         ValueError: If ``profile`` is ``None`` and no profile is registered under
@@ -135,4 +142,5 @@ def build_digest(
         niche=niche,
         freshness_days=freshness_days,
         limit=limit,
+        fallback_limit=fallback_limit,
     )

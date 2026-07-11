@@ -246,7 +246,10 @@ class TestBuildDigest:
         # to select_digest. Two eligible jobs: high score first.
         high = make_job(1, title="SAP WM Analyst", raw_location="Silao, Guanajuato")
         low = make_job(
-            2, title="Operador de Produccion", raw_location="Irapuato, Guanajuato"
+            2,
+            title="Inspector de Calidad",
+            raw_location="Irapuato, Guanajuato",
+            description="Inspeccion de calidad en planta automotriz.",
         )
         session = _RecordingSession([low, high])
 
@@ -255,6 +258,8 @@ class TestBuildDigest:
         assert isinstance(payload, DigestPayload)
         assert [job.id for job in payload.jobs] == [1, 2]
         assert payload.count == 2
+        # Both jobs pass the strict title gate, so neither is a fallback.
+        assert payload.fallback_jobs == ()
 
     def test_excludes_stale_and_unfit_rows_via_selector(self):
         """Rows that pass the SQL predicates but fail freshness or CV-fit must
@@ -288,6 +293,7 @@ class TestBuildDigest:
 
         assert payload.count == 0
         assert payload.jobs == ()
+        assert payload.fallback_jobs == ()
 
     def test_profile_none_resolves_default(self):
         session = _RecordingSession([make_job(1)])
@@ -317,3 +323,46 @@ class TestBuildDigest:
         preds = session.last_query.predicates_by_column()
         expected_bound = aware_utc(NOW) - timedelta(days=5)
         assert _find_predicate(preds, "date_scraped", op.ge) == expected_bound
+
+    def test_build_digest_populates_fallback_for_gate_rejected_jobs(self):
+        """A scorer-accepted, strict-title-gate-rejected job surfaces in
+        ``fallback_jobs`` end-to-end through the DB path, while the strict job
+        stays in ``jobs``. Proves the DB entry point forwards the two-tier
+        selection without surfacing raw rows."""
+        strict = make_job(1, title="SAP WM Analyst", raw_location="Silao, Guanajuato")
+        # Soldador is a weak trade title (gate rejects) but the description's
+        # 'calidad' makes the scorer accept it via the quality group.
+        fallback = make_job(
+            2,
+            title="Soldador",
+            raw_location="Silao, Guanajuato",
+            description="Soldadura MIG/MAG con calidad en planta.",
+        )
+        fallback.career = "Soldador"
+        session = _RecordingSession([strict, fallback])
+
+        payload = build_digest(
+            session, NOW, profile=PROFILE, limit=10, fallback_limit=5
+        )
+
+        assert [job.id for job in payload.jobs] == [1]
+        assert [job.id for job in payload.fallback_jobs] == [2]
+
+    def test_build_digest_fallback_limit_zero_disables_section(self):
+        """The DB path honors ``fallback_limit=0`` to opt out of the secondary
+        section even when gate-rejected scorer-accepted candidates exist."""
+        fallback = make_job(
+            1,
+            title="Soldador",
+            raw_location="Silao, Guanajuato",
+            description="Soldadura MIG/MAG con calidad en planta.",
+        )
+        fallback.career = "Soldador"
+        session = _RecordingSession([fallback])
+
+        payload = build_digest(
+            session, NOW, profile=PROFILE, limit=10, fallback_limit=0
+        )
+
+        assert payload.fallback_jobs == ()
+        assert payload.count == 0

@@ -26,8 +26,12 @@ Layout contract:
 * No JavaScript, no external assets, no iframes.
 * Semantic markup (``<h1>`` / ``<section>`` / ``<article>`` / lists) so screen
   readers and plain-text previews degrade gracefully.
-* Selector order is preserved: the renderer iterates ``payload.jobs`` as given
-  and never re-sorts.
+* Selector order is preserved: the renderer iterates ``payload.jobs`` and
+  ``payload.fallback_jobs`` as given and never re-sorts.
+* A secondary "Other nearby options you may want to review" section is rendered
+  below the primary list ONLY when ``payload.fallback_jobs`` is non-empty. When
+  it is empty the section is omitted entirely so a strict-only digest looks
+  exactly as before.
 
 The function returns a ``<html>...</html>`` document string ready to be handed to
 a future SES sender slice.
@@ -36,6 +40,8 @@ from __future__ import annotations
 
 import html
 import logging
+import math
+import unicodedata
 import urllib.parse
 
 from notifications.digest import DigestJob, DigestPayload
@@ -51,6 +57,32 @@ DESCRIPTION_PREVIEW_MAX = 200
 # (javascript:, data:, vbscript:, or an unparsable URL) falls back to plain text
 # so a bad/crafted URL can never execute or exfiltrate when the email is opened.
 SAFE_URL_SCHEMES: tuple[str, ...] = ("http", "https")
+
+# Characters that must never appear in a clickable href. ``urllib.parse.urlsplit``
+# is permissive with malformed hosts such as ``"http://exa mple.com:abc"``: it
+# preserves the embedded whitespace and bogus port, yielding a clickable href
+# that points at a broken/crafted host. Rejecting raw ASCII control characters
+# (0x00-0x1F) plus DEL (0x7F) and ASCII whitespace stops both malformed hosts
+# and control-char obfuscation used to hide a URL from human review.
+# range(0x21) covers control chars 0x00-0x1F plus the ASCII space (0x20).
+_UNSAFE_URL_CHARS: frozenset[str] = frozenset(chr(c) for c in range(0x21)) | {"\x7f"}
+
+# Unicode general categories that make a URL unsafe in any position. "C*" are
+# control/format/surrogate codepoints (C0, C1 controls like NEL/next-line,
+# BOM, etc.) and "Z*" are the Unicode separator categories (space, no-break
+# space, line/paragraph separators). ``urlsplit`` keeps these verbatim inside a
+# host or path, so a link such as ``"http://exa\u00a0mple.com/job"`` parses with
+# an embedded NBSP and would render as a clickable href to a broken/crafted
+# host. The ASCII frozenset above already covers the common cases; this check
+# extends the rejection to the full Unicode whitespace/control surface so a
+# non-ASCII obfuscation vector cannot slip past the ASCII-only guard.
+_UNSAFE_URL_CATEGORIES: frozenset[str] = frozenset(
+    # C*: control/format/surrogate/unassigned codepoints (C0 controls, C1
+    # controls like NEL, BOM, etc.). Z*: Unicode separators (space, no-break
+    # space, line/paragraph separators). ``urlsplit`` keeps these verbatim
+    # inside a host or path, so a link with them cannot be a real href.
+    ("Cc", "Cf", "Cs", "Co", "Cn", "Zs", "Zl", "Zp")
+)
 
 # Email layout constants. Inline styles keep the document self-contained for
 # email clients that strip <style> blocks.
@@ -80,6 +112,27 @@ _MUTED_STYLE = "color: #5a5a5a; font-size: 13px;"
 _PREVIEW_STYLE = "color: #3a3a3a; font-size: 14px; line-height: 1.45;"
 _REASON_LIST_STYLE = "margin: 8px 0 0 0; padding-left: 20px; font-size: 13px;"
 
+# Secondary fallback section. The heading is visually separated from the
+# primary cards (top margin + a muted top border) so the lower-confidence tier
+# reads as a distinct group, not a continuation of the primary list. The exact
+# heading text is a product label -- do not rephrase it without product sign-off.
+_FALLBACK_HEADING = "Other nearby options you may want to review"
+_SECTION_HEADING_STYLE = (
+    "margin: 28px 0 12px 0;"
+    " padding-top: 12px;"
+    " border-top: 1px solid #e2e2e2;"
+    " font-size: 17px;"
+    " color: #1a1a1a;"
+)
+_SECTION_INTRO_STYLE = "color: #5a5a5a; font-size: 13px; margin: 0 0 16px 0;"
+# One-line context for the secondary tier so the subscriber understands why
+# these are split from the primary list (lower title-confidence, still
+# scorer-accepted nearby options). Kept short to avoid adding email noise.
+_FALLBACK_INTRO = (
+    "Lower-confidence matches that still fit the profile geography and role "
+    "rules; review before applying."
+)
+
 
 def render_digest_html(payload: DigestPayload) -> str:
     """Render a digest payload as a self-contained HTML email body string.
@@ -101,9 +154,21 @@ def render_digest_html(payload: DigestPayload) -> str:
             f"payload must be a DigestPayload, got {type(payload).__name__}"
         )
 
-    jobs_html = "".join(_render_job_card(job) for job in payload.jobs)
-    if not payload.jobs:
-        jobs_html = _render_no_jobs()
+    # The email headline reports the TOTAL recommendation count (primary +
+    # fallback) so the subject/H1 reflects everything the subscriber will see,
+    # not just the strict tier. ``payload.count`` stays the primary-only count
+    # in the data model; the renderer is the presentation authority here.
+    total = payload.count + len(payload.fallback_jobs)
+
+    if total == 0:
+        body_html = _render_no_jobs()
+    else:
+        # Primary cards first, in selector order. When primary is empty but
+        # fallback exists, no "no jobs" message is shown -- jobs DID match, just
+        # at lower confidence, so the friendly empty state would be misleading.
+        body_html = "".join(_render_job_card(job) for job in payload.jobs)
+        if payload.fallback_jobs:
+            body_html += _render_fallback_section(payload.fallback_jobs)
 
     return (
         "<!DOCTYPE html>\n"
@@ -111,37 +176,87 @@ def render_digest_html(payload: DigestPayload) -> str:
         "<head>\n"
         '<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
-        f"<title>{html.escape(_subject(payload))}</title>\n"
+        f"<title>{html.escape(_subject(total))}</title>\n"
         "</head>\n"
         "<body>\n"
         f'<div style="{_CONTAINER_STYLE}">\n'
-        f"<h1>{_header_text(payload)}</h1>\n"
-        f"{_subtitle(payload)}\n"
-        f"{jobs_html}\n"
+        f"<h1>{_header_text(total)}</h1>\n"
+        f"{_subtitle(payload, total)}\n"
+        f"{body_html}\n"
         "</div>\n"
         "</body>\n"
         "</html>"
     )
 
 
-def _subject(payload: DigestPayload) -> str:
-    """Short plain-text subject line for the email header."""
-    return f"Industrial Bajio digest: {payload.count} new job(s)"
+def _render_fallback_section(fallback_jobs: tuple[DigestJob, ...]) -> str:
+    """Render the secondary lower-confidence tier under its distinct heading.
+
+    Reuses :func:`_render_job_card` so a fallback row is visually identical to a
+    primary row -- the separation is structural (heading + divider), not a
+    different card style, so the subscriber can compare them at a glance. The
+    heading text is a fixed product label; the intro line sets expectations
+    without rephrasing it.
+
+    Args:
+        fallback_jobs: The secondary digest rows, already ranked by the selector.
+
+    Returns:
+        An HTML fragment: a section heading, a short intro, and one card per
+        fallback job, in selector order.
+    """
+    cards = "".join(_render_job_card(job) for job in fallback_jobs)
+    return (
+        f'<h2 style="{_SECTION_HEADING_STYLE}">'
+        f"{html.escape(_FALLBACK_HEADING)}</h2>\n"
+        f'<p style="{_SECTION_INTRO_STYLE}">{html.escape(_FALLBACK_INTRO)}</p>\n'
+        f"{cards}"
+    )
 
 
-def _header_text(payload: DigestPayload) -> str:
-    """Top H1 of the email body."""
-    return f"Industrial Bajio job digest ({payload.count} new)"
+def _subject(total: int) -> str:
+    """Short plain-text subject line for the email header.
+
+    Args:
+        total: Total recommendation count (primary + fallback) shown in the
+            subject so the inbox preview matches the email body.
+    """
+    return f"Industrial Bajio digest: {total} new job(s)"
 
 
-def _subtitle(payload: DigestPayload) -> str:
-    """Intro line under the header, escaping metadata fields."""
+def _header_text(total: int) -> str:
+    """Top H1 of the email body.
+
+    Args:
+        total: Total recommendation count (primary + fallback).
+    """
+    return f"Industrial Bajio job digest ({total} new)"
+
+
+def _subtitle(payload: DigestPayload, total: int) -> str:
+    """Intro line under the header, escaping metadata fields.
+
+    Reports the total recommendation count and, when a fallback tier exists,
+    notes how it splits between primary and secondary so the subscriber can
+    interpret the headline number.
+
+    Args:
+        payload: The digest payload being rendered.
+        total: Total recommendation count (primary + fallback).
+    """
     generated = _safe_date_only(payload.generated_at)
     niche = html.escape(payload.niche or "")
     profile = html.escape(payload.profile_name or "")
+    fallback_count = len(payload.fallback_jobs)
+    if fallback_count:
+        split = (
+            f" ({payload.count} top matches + {fallback_count} nearby options)"
+        )
+    else:
+        split = ""
     return (
         f'<p style="{_MUTED_STYLE}">'
-        f"{payload.count} job(s) for the <strong>{niche}</strong> niche"
+        f"{total} job(s){split} for the <strong>{niche}</strong> niche"
         f" (profile: {profile}), generated {generated},"
         f" freshness window {payload.freshness_days} day(s)."
         "</p>"
@@ -223,7 +338,8 @@ def _render_job_link(job: DigestJob) -> str:
     escaped_href = html.escape(safe_url, quote=True)
     return (
         f'<p style="margin: 12px 0 0 0;">'
-        f'<a href="{escaped_href}" style="{_BUTTON_STYLE}">View posting</a>'
+        f'<a href="{escaped_href}" target="_blank" '
+        f'rel="noopener noreferrer" style="{_BUTTON_STYLE}">View posting</a>'
         "</p>"
     )
 
@@ -265,19 +381,28 @@ def _format_salary(salary_min: float | None, salary_max: float | None, currency:
     if salary_min is None and salary_max is None:
         return ""
 
+    # Defense in depth: a NaN (Decimal('NaN') that slipped past the payload
+    # coercion, or a float nan) is treated as absent so the card never shows
+    # "Salary MXN nan - nan". The payload coercer normalizes NaN -> None, but a
+    # renderer constructed by hand or a future field must not regress here.
+    min_val = None if salary_min is None or math.isnan(salary_min) else salary_min
+    max_val = None if salary_max is None or math.isnan(salary_max) else salary_max
+    if min_val is None and max_val is None:
+        return ""
+
     # Currency is job-board text; escape so a malicious code cannot inject tags.
     # Upper-casing happens before escaping so ">" etc. survive unchanged in form.
     cur = html.escape((currency or "").strip().upper())
     currency_prefix = f"{cur} " if cur else ""
 
-    if salary_min is not None and salary_max is not None:
+    if min_val is not None and max_val is not None:
         return (
-            f"Salary {currency_prefix}{_format_amount(salary_min)}"
-            f" - {_format_amount(salary_max)}"
+            f"Salary {currency_prefix}{_format_amount(min_val)}"
+            f" - {_format_amount(max_val)}"
         )
-    if salary_min is not None:
-        return f"Salary {currency_prefix}{_format_amount(salary_min)}+"
-    return f"Salary up to {currency_prefix}{_format_amount(salary_max)}"
+    if min_val is not None:
+        return f"Salary {currency_prefix}{_format_amount(min_val)}+"
+    return f"Salary up to {currency_prefix}{_format_amount(max_val)}"
 
 
 def _format_amount(value: float) -> str:
@@ -316,12 +441,42 @@ def _safe_date_only(iso_string: str) -> str:
     return "unknown date"
 
 
-def _safe_url(url: str | None) -> str | None:
-    """Return ``url`` when it has an http(s) scheme and is parseable, else None.
+def _has_unsafe_chars(text: str) -> bool:
+    """Return True if ``text`` contains ASCII or Unicode unsafe characters.
 
-    A malformed URL string (e.g. an unclosed IPv6 literal like ``"http://[::1"``)
-    is logged and treated as unsafe so a broken/tampered link degrades to plain
-    text instead of either crashing the renderer or rendering a broken anchor.
+    Combines the ASCII whitespace/control frozenset with a Unicode general
+    category check so non-ASCII obfuscation vectors (NBSP, line/paragraph
+    separators, C1 controls like NEL) are rejected in addition to the legacy
+    ASCII surface. ``str.isspace`` is intentionally NOT relied on alone because
+    it misses several control codepoints that still break a clickable href.
+    """
+    if any(ch in _UNSAFE_URL_CHARS for ch in text):
+        return True
+    return any(unicodedata.category(ch) in _UNSAFE_URL_CATEGORIES for ch in text)
+
+
+def _safe_url(url: str | None) -> str | None:
+    """Return ``url`` when it is a well-formed http(s) link, else None.
+
+    A malformed URL string (e.g. an unclosed IPv6 literal like ``"http://[::1"``,
+    a host with embedded ASCII or Unicode whitespace like
+    ``"http://exa mple.com:abc"`` or ``"http://exa\\u00a0mple.com/job"``, or an
+    invalid port) is logged and treated as unsafe so a broken/tampered link
+    degrades to plain text instead of either crashing the renderer or rendering
+    a broken/crafted anchor.
+
+    ``urlsplit`` is permissive: it keeps whitespace inside the host and a
+    non-numeric port string without raising. We therefore also reject any raw
+    ASCII or Unicode whitespace/control characters in the link and validate the
+    port explicitly (accessing ``parsed.port`` raises ``ValueError`` on a bad
+    port).
+
+    The unsafe-character check runs against the RAW input, before any trimming.
+    ``str.strip`` removes leading/trailing ASCII and Unicode whitespace (NBSP,
+    line/paragraph separators, NEL, ASCII space), so checking after trimming
+    would let a boundary obfuscation vector such as ``"\\u00a0https://example.com"``
+    survive as a clickable href. Malformed inputs are never silently sanitized
+    into a valid link -- they degrade to plain text.
 
     Raises:
         Nothing. ``urllib.parse.urlsplit`` raises ``ValueError`` on malformed
@@ -330,8 +485,20 @@ def _safe_url(url: str | None) -> str | None:
     """
     if not url or not isinstance(url, str):
         return None
+    # Check the RAW input for unsafe characters BEFORE any trimming. ``strip``
+    # removes leading/trailing ASCII and Unicode whitespace (NBSP, line/paragraph
+    # separators, NEL, ASCII space), so checking the trimmed value would hide a
+    # boundary obfuscation vector such as "\u00a0https://example.com/job" and
+    # let it render as a clickable href. Reject the raw value outright; a
+    # malformed link is never silently sanitized into a valid one.
+    if _has_unsafe_chars(url):
+        logger.warning(
+            "URL contains whitespace/control characters, treating as unsafe: %r", url
+        )
+        return None
+    stripped = url.strip()
     try:
-        parsed = urllib.parse.urlsplit(url.strip())
+        parsed = urllib.parse.urlsplit(stripped)
     except ValueError:
         # "Invalid IPv6 URL" and similar: a corrupt source value must not take
         # down the whole digest render. Treat as unsafe -> plain text.
@@ -344,4 +511,12 @@ def _safe_url(url: str | None) -> str | None:
     if not parsed.netloc:
         logger.warning("URL has no host, treating as unsafe: %r", url)
         return None
-    return url.strip()
+    # A non-numeric port string (":abc") does not make urlsplit raise, but
+    # accessing ``parsed.port`` does. Validate explicitly so bogus ports degrade
+    # to plain text instead of becoming a clickable href to a broken host.
+    try:
+        parsed.port  # noqa: B018 -- property access for its validation side effect
+    except ValueError:
+        logger.warning("URL has invalid port, treating as unsafe: %r", url)
+        return None
+    return stripped

@@ -10,7 +10,8 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from scrapers.pipeline import _map_phase1_records
+from scrapers.pipeline import _map_phase1_records, _filter_occ_by_alert_geography
+from notifications.profiles import INDUSTRIAL_IRAPUATO_BAJIO_PROFILE
 
 
 class TestMapPhase1Records:
@@ -151,3 +152,113 @@ class TestMapPhase1Records:
         )
         records = _map_phase1_records(df, "Developer", "Desarrollo")
         assert len(records) == 1
+
+
+# ---------------------------------------------------------------------------
+# OCC Industrial Bajío alert-geography filtering (Phase 1 insert gate)
+# ---------------------------------------------------------------------------
+
+
+_ALERT_NICHE = "Industrial Bajío"
+_ALERT_CITIES = INDUSTRIAL_IRAPUATO_BAJIO_PROFILE.allowed_cities
+
+
+def _occ_df(locations):
+    """Build a minimal OCC scraper DataFrame with the given raw_location rows."""
+    return pd.DataFrame(
+        {
+            "site": ["occ"] * len(locations),
+            "job_url": [f"https://example.com/job/{i}" for i in range(len(locations))],
+            "title": ["Operador de Producción"] * len(locations),
+            "company": ["Industrias Bajío"] * len(locations),
+            "raw_location": locations,
+            "job_type": ["Presencial"] * len(locations),
+        }
+    )
+
+
+class TestFilterOccAlertGeography:
+    def test_industrial_bajio_keeps_celaya_gua_mx(self):
+        df = _occ_df(["Celaya, GUA, MX"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert len(kept) == 1
+        assert kept.iloc[0]["raw_location"] == "Celaya, GUA, MX"
+
+    def test_industrial_bajio_keeps_leon_guanajuato(self):
+        df = _occ_df(["León, Guanajuato"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert len(kept) == 1
+        assert kept.iloc[0]["raw_location"] == "León, Guanajuato"
+
+    def test_industrial_bajio_drops_tizayuca_hidalgo(self):
+        df = _occ_df(["Tizayuca, Hidalgo"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert kept.empty
+
+    def test_industrial_bajio_drops_chihuahua(self):
+        df = _occ_df(["Chihuahua, Chihuahua"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert kept.empty
+
+    def test_industrial_bajio_drops_miguel_hidalgo_cdmx(self):
+        df = _occ_df(["Miguel Hidalgo, Ciudad de México"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert kept.empty
+
+    def test_industrial_bajio_mixed_locations_keeps_only_geography(self):
+        df = _occ_df(
+            [
+                "Celaya, GUA, MX",
+                "Tizayuca, Hidalgo",
+                "León, Guanajuato",
+                "Chihuahua, Chihuahua",
+                "Irapuato, Guanajuato",
+                "Miguel Hidalgo, Ciudad de México",
+            ]
+        )
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert list(kept["raw_location"]) == [
+            "Celaya, GUA, MX",
+            "León, Guanajuato",
+            "Irapuato, Guanajuato",
+        ]
+
+    def test_non_alert_niche_is_not_filtered(self):
+        # Tech/general niche must keep nationwide rows (all-Mexico behaviour).
+        df = _occ_df(["Tizayuca, Hidalgo", "Celaya, GUA, MX"])
+        kept = _filter_occ_by_alert_geography(df, "Desarrollo", _ALERT_CITIES)
+        assert len(kept) == 2
+
+    def test_non_alert_niche_with_none_cities_is_not_filtered(self):
+        df = _occ_df(["Monterrey, Nuevo León", "Tijuana, Baja California"])
+        kept = _filter_occ_by_alert_geography(df, "tech_mx", ())
+        assert len(kept) == 2
+
+    def test_alert_niche_empty_cities_skips_filter_to_avoid_dropping_all(self):
+        # Missing alert profile -> empty allowed_cities. Fail safe: keep all
+        # rows rather than silently emptying the OCC insert.
+        df = _occ_df(["Celaya, GUA, MX", "Tizayuca, Hidalgo"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, ())
+        assert len(kept) == 2
+
+    def test_empty_dataframe_returns_empty(self):
+        df = pd.DataFrame(columns=["site", "job_url", "raw_location"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert kept.empty
+
+    def test_filter_does_not_mutate_input_dataframe(self):
+        df = _occ_df(["Celaya, GUA, MX", "Tizayuca, Hidalgo"])
+        original_len = len(df)
+        _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        assert len(df) == original_len
+        assert list(df["raw_location"]) == ["Celaya, GUA, MX", "Tizayuca, Hidalgo"]
+
+    def test_kept_rows_feed_map_phase1_records_successfully(self):
+        # Integration guard: the filtered DataFrame must still map cleanly.
+        df = _occ_df(["Celaya, GUA, MX", "Tizayuca, Hidalgo"])
+        kept = _filter_occ_by_alert_geography(df, _ALERT_NICHE, _ALERT_CITIES)
+        records = _map_phase1_records(kept, "Operador", _ALERT_NICHE)
+        assert len(records) == 1
+        assert records[0]["raw_location"] == "Celaya, GUA, MX"
+        assert records[0]["industry_niche"] == _ALERT_NICHE
+        assert records[0]["status"] == "PENDING_ENRICHMENT"

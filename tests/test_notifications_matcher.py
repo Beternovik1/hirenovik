@@ -5,7 +5,13 @@ filtering, include/exclude keyword rules, case/accent insensitivity, NaN safety,
 non-mutation of input, and the max_jobs digest cap.
 """
 
-from notifications.matcher import match_job, match_jobs
+from notifications.matcher import (
+    GUANAJUATO_STATE_TOKENS,
+    _is_guanajuato_state_suffix,
+    matches_alert_geography,
+    match_job,
+    match_jobs,
+)
 from notifications.profiles import AlertProfile, INDUSTRIAL_IRAPUATO_BAJIO_PROFILE
 
 PROFILE = INDUSTRIAL_IRAPUATO_BAJIO_PROFILE
@@ -71,6 +77,53 @@ class TestAllowedGeographyPasses:
         result = match_job(_job("Operador de Producción", "Irapuato"), PROFILE)
         assert result is not None
         assert result["matched_city"] == "irapuato"
+
+
+# ---------------------------------------------------------------------------
+# Geography: Indeed-published "GUA" state abbreviation (regression)
+# ---------------------------------------------------------------------------
+
+
+class TestIndeedGuaAbbreviation:
+    # Indeed publishes Guanajuato as "GUA" in raw_location (e.g. "Celaya, GUA,
+    # MX"). Before the fix, "gua" was not in GUANAJUATO_STATE_TOKENS, so all
+    # 67 fresh Indeed Industrial Bajio candidates failed state validation and
+    # never reached scoring. These tests pin the abbreviation acceptance.
+
+    def test_gua_is_registered_as_state_token(self):
+        assert "gua" in GUANAJUATO_STATE_TOKENS
+
+    def test_match_job_celaya_gua_mx_matches(self):
+        result = match_job(_job("Operador de Producción", "Celaya, GUA, MX"), PROFILE)
+        assert result is not None
+        assert result["matched_city"] == "celaya"
+
+    def test_match_job_leon_gua_mx_matches(self):
+        result = match_job(_job("Técnico de Mantenimiento", "León, GUA, MX"), PROFILE)
+        assert result is not None
+        assert result["matched_city"] == "leon"
+
+    def test_match_job_silao_gua_mx_matches(self):
+        result = match_job(_job("Soldador", "Silao, GUA, MX"), PROFILE)
+        assert result is not None
+        assert result["matched_city"] == "silao"
+
+    def test_is_guanajuato_state_suffix_gua_returns_true(self):
+        assert _is_guanajuato_state_suffix("GUA, MX") is True
+
+    def test_is_guanajuato_state_suffix_guadalajara_returns_false(self):
+        # "gua" is a registered token, but tokenization extracts whole words, so
+        # "guadalajara" is a single token that does not equal "gua". This guards
+        # against a false positive where a "GUA" state token could leak into the
+        # Jalisco city name via substring matching.
+        assert _is_guanajuato_state_suffix("Guadalajara") is False
+
+    def test_match_job_allowed_city_with_guadalajara_suffix_rejected(self):
+        # Belt-and-suspenders: even with a Bajio city prefix, a "Guadalajara"
+        # state suffix (a single non-matching token) must reject the job. This
+        # proves the "gua" token does not match "guadalajara" through the matcher.
+        result = match_job(_job("Soldador", "Irapuato, Guadalajara"), PROFILE)
+        assert result is None
 
 
 # ---------------------------------------------------------------------------
@@ -362,3 +415,54 @@ class TestMatchJobs:
         results = match_jobs([_job("Soldador", "Celaya, Guanajuato")], PROFILE)
         assert len(results) == 1
         assert results[0]["matched_city"] == "celaya"
+
+
+# ---------------------------------------------------------------------------
+# matches_alert_geography: public Phase 1 geography gate
+# ---------------------------------------------------------------------------
+
+
+class TestMatchesAlertGeography:
+    """Phase 1 OCC insert filter reuses the same geography semantics."""
+
+    CITIES = INDUSTRIAL_IRAPUATO_BAJIO_PROFILE.allowed_cities
+
+    def test_matches_alert_geography_celaya_gua_mx_returns_true(self):
+        # Indeed-style "city, GUA, MX" abbreviation must pass.
+        assert matches_alert_geography("Celaya, GUA, MX", self.CITIES) is True
+
+    def test_matches_alert_geography_leon_with_accent_returns_true(self):
+        assert matches_alert_geography("León, Guanajuato", self.CITIES) is True
+
+    def test_matches_alert_geography_irapuato_returns_true(self):
+        assert matches_alert_geography("Irapuato, Guanajuato", self.CITIES) is True
+
+    def test_matches_alert_geography_tizayuca_hidalgo_returns_false(self):
+        assert matches_alert_geography("Tizayuca, Hidalgo", self.CITIES) is False
+
+    def test_matches_alert_geography_chihuahua_returns_false(self):
+        assert matches_alert_geography("Chihuahua, Chihuahua", self.CITIES) is False
+
+    def test_matches_alert_geography_miguel_hidalgo_cdmx_returns_false(self):
+        # "Miguel Hidalgo, Ciudad de México" — outside Bajío geography.
+        assert matches_alert_geography(
+            "Miguel Hidalgo, Ciudad de México", self.CITIES
+        ) is False
+
+    def test_matches_alert_geography_leon_nuevo_leon_returns_false(self):
+        # Same city name "Leon" but a non-Guanajuato state suffix -> rejected.
+        assert matches_alert_geography("Leon, Nuevo Leon", self.CITIES) is False
+
+    def test_matches_alert_geography_none_returns_false(self):
+        assert matches_alert_geography(None, self.CITIES) is False
+
+    def test_matches_alert_geography_nan_returns_false(self):
+        import math
+        assert matches_alert_geography(math.nan, self.CITIES) is False
+
+    def test_matches_alert_geography_empty_string_returns_false(self):
+        assert matches_alert_geography("", self.CITIES) is False
+
+    def test_matches_alert_geography_empty_cities_returns_false(self):
+        # No allowed cities means nothing can match.
+        assert matches_alert_geography("Irapuato, Guanajuato", ()) is False

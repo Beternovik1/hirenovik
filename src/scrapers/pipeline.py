@@ -19,6 +19,7 @@ from shared.config import (
 from scrapers.computrabajo_scraper import ComputrabajoScraper
 from scrapers.occ_scraper import OCCScraper
 from shared.config import include_linkedin_today
+from notifications.matcher import matches_alert_geography
 from notifications.profiles import get_alert_profile
 from notifications.scoring import DIGEST_KEY_SCORE, score_job
 
@@ -65,6 +66,62 @@ def _map_phase1_records(df, search_term, industry_niche):
             "status": "PENDING_ENRICHMENT",
         })
     return records
+
+
+def _filter_occ_by_alert_geography(df, industry_niche, allowed_cities):
+    """Drop OCC rows whose ``raw_location`` is outside the alert geography.
+
+    Only applied to the Industrial Bajío niche: OCC's ``scrape_metadata`` hits
+    national results (``countries=["MX"]``) and would otherwise insert Industrial
+    Bajío candidates from Hidalgo/CDMX/Jalisco/etc., wasting enrichment quota on
+    jobs the alert can never email. Tech/general niches are NOT filtered, so the
+    all-Mexico tech scrape behaviour is preserved.
+
+    Geography semantics are reused from :func:`notifications.matcher.matches_alert_geography`
+    (which delegates to the alert matcher's ``_matches_location``), so this
+    filter accepts exactly the same locations the alert matcher accepts
+    downstream (e.g. ``"Celaya, GUA, MX"``, ``"León, Guanajuato"``) and rejects
+    the same out-of-geography ones (e.g. ``"Tizayuca, Hidalgo"``,
+    ``"Leon, Nuevo Leon"``). Keeping a single source of truth for geography
+    means a row that survives the insert filter is guaranteed to survive the
+    matcher's geography gate too.
+
+    Pure: no I/O, no DB. Operates only on the DataFrame read from the scraper.
+
+    Args:
+        df: OCC scraper DataFrame (must expose a ``raw_location`` column).
+        industry_niche: The niche tag of the current search term
+            (e.g. ``"Industrial Bajío"``).
+        allowed_cities: Accent-folded lowercase city tokens defining the alert
+            geography (typically the alert profile's ``allowed_cities``).
+
+    Returns:
+        A filtered DataFrame (possibly empty) with out-of-geography rows
+        removed. For non-alert niches ``df`` is returned unchanged.
+    """
+    if df.empty or industry_niche != _ALERT_NICHE:
+        return df
+    # No alert profile resolved -> allowed_cities empty. Fail safe by skipping
+    # the filter entirely: an empty allowed_cities would match NO city and drop
+    # every Industrial Bajío row, silently emptying the OCC insert. Keeping the
+    # legacy nationwide insert is preferable to a silent empty scrape.
+    if not allowed_cities:
+        logger.warning(
+            "OCC alert geography filter: empty allowed_cities for niche '%s'; "
+            "skipping filter to avoid dropping all rows.",
+            industry_niche,
+        )
+        return df
+    mask = df["raw_location"].apply(
+        lambda value: matches_alert_geography(value, allowed_cities)
+    )
+    kept = df[mask].reset_index(drop=True)
+    dropped = len(df) - len(kept)
+    logger.info(
+        "OCC alert geography filter for niche '%s': kept %d, dropped %d",
+        industry_niche, len(kept), dropped,
+    )
+    return kept
 
 
 def run_pipeline(search_config, results_limit, include_linkedin=False):
@@ -158,6 +215,16 @@ def run_cloud_extraction_pipeline(
         else NEW_SCRAPERS_CONFIG["occ"]["max_results"]
     )
 
+    # Resolve the alert profile's allowed_cities once so the Phase 1 OCC insert
+    # path can geography-filter Industrial Bajío rows against the exact same
+    # city tokens the Phase 2 alert matcher uses. A missing profile degrades to
+    # an empty tuple, which the filter treats as "skip filtering" (keep the
+    # legacy nationwide insert rather than silently empty Occ).
+    alert_profile = get_alert_profile(_ALERT_PROFILE_NAME)
+    alert_allowed_cities = (
+        alert_profile.allowed_cities if alert_profile is not None else ()
+    )
+
     try:
         for search_term, location, industry_niche in search_config:
             logger.info("==> Cloud extraction: %s en %s (Niche: %s)", search_term, location, industry_niche)
@@ -199,6 +266,14 @@ def run_cloud_extraction_pipeline(
                     is_remote=NEW_SCRAPERS_CONFIG["occ"]["is_remote"],
                     max_results=occ_max,
                 )
+                if not df_occ.empty:
+                    # Industrial Bajío OCC rows are national by default; drop the
+                    # out-of-geography ones before insert so enrichment quota is
+                    # not wasted on jobs the alert can never email. Other niches
+                    # keep nationwide results (tech all-Mexico behaviour).
+                    df_occ = _filter_occ_by_alert_geography(
+                        df_occ, industry_niche, alert_allowed_cities
+                    )
                 if not df_occ.empty:
                     records = _map_phase1_records(df_occ, search_term, industry_niche)
                     inserted, skipped = load_data(session, records)
@@ -307,6 +382,13 @@ def run_multi_profile_cloud_extraction(
 # a named constant rather than a magic string so the niche->profile coupling is
 # auditable in one place.
 _ALERT_PROFILE_NAME = "industrial_irapuato_bajio"
+
+# Industrial Bajío niche tag. Matches shared.config._INDUSTRIAL_BAJIO_NICHE and
+# the ``industry_niche`` value carried by every SEARCH_PROFILES[
+# "industrial_irapuato_bajio"] tuple. OCC scrapes national results, so without
+# this gate Industrial Bajío rows pour in from Hidalgo/CDMX/Jalisco/etc.; only
+# this niche is geography-filtered at insert time, tech/general stay nationwide.
+_ALERT_NICHE = "Industrial Bajío"
 
 
 def _partition_pending_by_bucket(jobs, alert_niche):

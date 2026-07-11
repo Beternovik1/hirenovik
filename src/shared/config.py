@@ -364,13 +364,19 @@ ENRICHMENT_CONFIG = {
 # so the digest and the enrichment queue share ONE product definition of "recent
 # Industrial Bajío job": a job the enrichment bucket enriched (status NEW,
 # description present, within ALERT_FRESHNESS_DAYS) is exactly the candidate set
-# the digest selects from. Only the digest-specific cap (default 10) and the
-# scoring profile name are new knobs here, avoiding duplicated constants.
+# the digest selects from. Only the digest-specific caps (primary default 10,
+# secondary fallback default 5) and the scoring profile name are new knobs here,
+# avoiding duplicated constants.
 ALERT_DIGEST_LIMIT = int(os.getenv("ALERT_DIGEST_LIMIT", "10"))
+# Cap for the secondary "Other nearby options" section: lower-confidence
+# scorer-accepted jobs that failed the strict title gate. Kept small so the
+# total email (primary + secondary) stays scannable.
+ALERT_DIGEST_FALLBACK_LIMIT = int(os.getenv("ALERT_DIGEST_FALLBACK_LIMIT", "5"))
 ALERT_DIGEST_PROFILE = os.getenv("ALERT_DIGEST_PROFILE", "industrial_irapuato_bajio")
 
 ALERT_DIGEST_CONFIG = {
     "limit": ALERT_DIGEST_LIMIT,
+    "fallback_limit": ALERT_DIGEST_FALLBACK_LIMIT,
     "niche": ALERT_ENRICHMENT_NICHE,
     "freshness_days": ALERT_FRESHNESS_DAYS,
     "profile": ALERT_DIGEST_PROFILE,
