@@ -65,3 +65,12 @@ module "observability" {
   glue_job_name        = module.data_engineering.job_name
   state_machine_arn    = module.orchestration.state_machine_arn
 }
+
+module "notifications" {
+  source = "../../modules/notifications"
+
+  environment                = var.environment
+  region                     = var.aws_region
+  ses_from_email             = var.ses_from_email
+  create_ses_sender_identity = var.create_ses_sender_identity
+}
