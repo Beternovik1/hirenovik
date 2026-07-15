@@ -46,3 +46,20 @@ output "alert_email_schedule_name" {
   description = "Name of the EventBridge Scheduler schedule that fires the alert email daily."
   value       = aws_scheduler_schedule.alert_email_daily.name
 }
+
+# Alert email Lambda dependency-layer surfaces.
+
+output "alert_email_lambda_layer_arn" {
+  description = "ARN of the Terraform-built alert email Lambda dependency layer; empty when create_alert_email_lambda_layer is false."
+  value       = var.create_alert_email_lambda_layer ? aws_lambda_layer_version.alert_email[0].arn : ""
+}
+
+output "alert_email_lambda_layer_version" {
+  description = "Version number of the Terraform-built alert email Lambda dependency layer; empty when create_alert_email_lambda_layer is false."
+  value       = var.create_alert_email_lambda_layer ? aws_lambda_layer_version.alert_email[0].version : ""
+}
+
+output "alert_email_effective_layer_arns" {
+  description = "Combined Lambda Layer ARNs actually attached to the alert email Lambda (Terraform-built first, then any external ARNs). Useful for audit/debug."
+  value       = local.alert_email_effective_layers
+}

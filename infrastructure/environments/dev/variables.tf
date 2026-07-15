@@ -66,6 +66,19 @@ variable "alert_email_lambda_layer_arns" {
   default     = []
 }
 
+variable "create_alert_email_lambda_layer" {
+  description = <<-EOT
+    Whether Terraform builds and publishes the alert email Lambda dependency
+    layer (SQLAlchemy, psycopg2-binary, python-dotenv) in this environment.
+    Defaults to true so `terraform apply` provisions a Lambda-ready layer. Set
+    to false to instead supply external layer ARN(s) via
+    alert_email_lambda_layer_arns. Build prerequisite: the host running
+    `terraform apply` needs `pip` on PATH; pip runs at apply time only.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "alert_email_schedule_expression" {
   description = "EventBridge Scheduler expression for the daily alert email. Default 8:00 AM in alert_email_schedule_timezone."
   type        = string

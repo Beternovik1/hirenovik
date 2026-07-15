@@ -1,0 +1,25 @@
+# Pinned runtime dependencies for the alert email Lambda layer.
+#
+# These are the ONLY third-party packages the alert email Lambda imports at
+# runtime (see src/lambda_functions/alert_email/handler.py and its import
+# closure under src/notifications and src/database):
+#   - SQLAlchemy          -> database access (sqlalchemy.orm, dialects.postgresql)
+#   - psycopg2-binary      -> Postgres DB-API driver used by SQLAlchemy
+#   - python-dotenv        -> shared.config loads DATABASE_URL / env vars
+#
+# boto3 is intentionally NOT listed: the python3.12 Lambda runtime ships a
+# compatible boto3, and bundling it in a layer would shadow the runtime copy
+# and can break AWS SDK credential/region resolution. Never add boto3 here.
+#
+# All pins mirror the application requirements.txt so the layer matches the
+# versions tested on the host/Docker image. Bump both files together when
+# upgrading. Versions are exact (==) so the layer is reproducible and the
+# null_resource trigger hash only changes on an intentional pin change.
+#
+# psycopg2-binary ships manylinux wheels with the libpq shared library bundled,
+# so no system Postgres dev headers are needed at build time and the layer is
+# Lambda/Linux-compatible without compiling from source.
+
+SQLAlchemy==2.0.46
+psycopg2-binary==2.9.11
+python-dotenv==1.2.1
