@@ -66,6 +66,7 @@ terraform.tfstate.backup
 
 # Terraform Lambda build artifacts
 infrastructure/modules/ml_inference/build/
+infrastructure/modules/notifications/build/
 
 # AI-generated / internal docs — not for public repo
 ASIGNACION.md

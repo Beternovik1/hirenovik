@@ -29,3 +29,20 @@ output "ses_send_email_policy_json" {
   description = "JSON of the least-privilege ses:SendEmail policy document; empty when not created by Terraform."
   value       = var.create_ses_sender_identity ? data.aws_iam_policy_document.ses_send_email[0].json : ""
 }
+
+# Alert email Lambda + schedule surfaces for observability / downstream wiring.
+
+output "alert_email_lambda_function_name" {
+  description = "Name of the daily alert email Lambda function."
+  value       = aws_lambda_function.alert_email.function_name
+}
+
+output "alert_email_lambda_function_arn" {
+  description = "ARN of the daily alert email Lambda function."
+  value       = aws_lambda_function.alert_email.arn
+}
+
+output "alert_email_schedule_name" {
+  description = "Name of the EventBridge Scheduler schedule that fires the alert email daily."
+  value       = aws_scheduler_schedule.alert_email_daily.name
+}

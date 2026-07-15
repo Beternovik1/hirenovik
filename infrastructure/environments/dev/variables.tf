@@ -30,3 +30,50 @@ variable "create_ses_sender_identity" {
   type        = bool
   default     = false
 }
+
+variable "database_url" {
+  description = <<-EOT
+    Supabase Postgres connection string for the alert email Lambda in this
+    environment. Sensitive. Set via TF_VAR_database_url or tfvars (gitignored);
+    never commit a value here.
+  EOT
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "alert_recipient_email" {
+  description = "Single To address for the daily digest in this environment. Set via tfvars; never commit a personal email default."
+  type        = string
+  default     = ""
+}
+
+variable "alert_email_dry_run" {
+  description = "Initial ALERT_EMAIL_DRY_RUN on the alert email Lambda. Keep \"true\" unless this environment is cleared to send real SES traffic."
+  type        = string
+  default     = "true"
+}
+
+variable "alert_email_schedule_enabled" {
+  description = "Whether the daily alert email schedule fires in this environment."
+  type        = bool
+  default     = false
+}
+
+variable "alert_email_lambda_layer_arns" {
+  description = "Lambda Layer ARNs that provide runtime Python dependencies for the alert email Lambda. Required before enabling the schedule."
+  type        = list(string)
+  default     = []
+}
+
+variable "alert_email_schedule_expression" {
+  description = "EventBridge Scheduler expression for the daily alert email. Default 8:00 AM in alert_email_schedule_timezone."
+  type        = string
+  default     = "cron(0 8 * * ? *)"
+}
+
+variable "alert_email_schedule_timezone" {
+  description = "IANA timezone for the alert email schedule expression."
+  type        = string
+  default     = "America/Mexico_City"
+}
