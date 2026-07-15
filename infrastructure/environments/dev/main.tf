@@ -73,4 +73,13 @@ module "notifications" {
   region                     = var.aws_region
   ses_from_email             = var.ses_from_email
   create_ses_sender_identity = var.create_ses_sender_identity
+
+  # Alert email Lambda + daily schedule.
+  database_url                    = var.database_url
+  alert_recipient_email           = var.alert_recipient_email
+  alert_email_dry_run             = var.alert_email_dry_run
+  alert_email_schedule_enabled    = var.alert_email_schedule_enabled
+  alert_email_schedule_expression = var.alert_email_schedule_expression
+  alert_email_schedule_timezone   = var.alert_email_schedule_timezone
+  alert_email_lambda_layer_arns   = var.alert_email_lambda_layer_arns
 }
