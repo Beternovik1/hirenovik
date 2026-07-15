@@ -81,5 +81,6 @@ module "notifications" {
   alert_email_schedule_enabled    = var.alert_email_schedule_enabled
   alert_email_schedule_expression = var.alert_email_schedule_expression
   alert_email_schedule_timezone   = var.alert_email_schedule_timezone
+  create_alert_email_lambda_layer = var.create_alert_email_lambda_layer
   alert_email_lambda_layer_arns   = var.alert_email_lambda_layer_arns
 }

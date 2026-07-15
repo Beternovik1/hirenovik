@@ -94,23 +94,41 @@ variable "alert_email_schedule_enabled" {
 # ---------------------------------------------------------------------------
 # Runtime dependency layer. The Terraform zip packages application code only;
 # Python runtime deps (sqlalchemy, psycopg2-binary, python-dotenv) are NOT
-# bundled. Provide one or more Lambda Layer ARN(s) here that supply those
-# packages. The list is attached as `layers` on aws_lambda_function.alert_email.
-# Defaulting to an empty list keeps `terraform apply` safe as infrastructure-only;
-# the Lambda is not invokable until dependencies are supplied. The schedule
-# precondition blocks enabling unattended sends until at least one layer is
-# supplied.
+# bundled. By default Terraform BUILDS the layer itself (see layer.tf and
+# layers/alert_email/requirements.txt); the toggle below turns that off so an
+# operator can pass external layer ARN(s) instead (e.g. a shared common-libs
+# layer owned outside this module). Either path is fine; the schedule
+# precondition blocks enabling unattended sends until at least one effective
+# layer is attached so a fresh apply cannot fire into a Lambda that fails at
+# import time.
 # ---------------------------------------------------------------------------
+
+variable "create_alert_email_lambda_layer" {
+  description = <<-EOT
+    Whether Terraform builds and publishes the alert email Lambda dependency
+    layer from layers/alert_email/requirements.txt (SQLAlchemy,
+    psycopg2-binary, python-dotenv). Defaults to true so `terraform apply`
+    can provision a Lambda-ready layer without the operator hand-building one.
+    Set to false to skip Terraform-owned layer creation and instead supply
+    layer ARN(s) via alert_email_lambda_layer_arns (e.g. a shared
+    common-libs layer managed elsewhere). Build prerequisite: the host running
+    `terraform apply` needs `pip` reachable on PATH; pip install runs at
+    apply time only, never during validate/plan.
+  EOT
+  type        = bool
+  default     = true
+}
 
 variable "alert_email_lambda_layer_arns" {
   description = <<-EOT
-    Optional list of Lambda Layer ARN(s) providing the alert email Lambda's
-    runtime Python deps (sqlalchemy, psycopg2-binary, python-dotenv). boto3 is
-    supplied by the Lambda runtime and must NOT be included. The Terraform zip
-    packages app code only. Leave empty for an infrastructure-only deploy; the
-    Lambda is not invokable until dependencies are layered. The daily schedule's
-    precondition refuses to be ENABLED until a layer is supplied, so unattended
-    invocations cannot fire into a Lambda that would fail at import time.
+    Optional list of ADDITIONAL Lambda Layer ARN(s) attached to the alert email
+    Lambda alongside any Terraform-built layer (when
+    create_alert_email_lambda_layer is true). Use this to attach a shared
+    common-libs layer owned outside this module, or to supply the entire dep
+    layer externally when create_alert_email_lambda_layer is false. boto3 is
+    supplied by the Lambda runtime and must NOT be included in any layer here.
+    The daily schedule precondition refuses to be ENABLED until at least one
+    effective layer (Terraform-built or external) is attached.
   EOT
   type        = list(string)
   default     = []

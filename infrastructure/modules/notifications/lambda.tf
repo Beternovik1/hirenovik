@@ -19,10 +19,7 @@
 #     policy -- the count guard on the attachment enforces that.
 
 # ---------------------------------------------------------------------------
-# Package: zip the application code only. Runtime Python deps (sqlalchemy,
-# psycopg2-binary, python-dotenv) are NOT bundled here -- provide them via a
-# Lambda Layer. boto3 is supplied by the Lambda runtime.
-#
+# Package: zip the application code only (deps live in layer.tf's Lambda Layer).
 # source_dir zips the whole src/ tree; `excludes` drops the heavy, unrelated
 # scrapers / NLP / ETL / frontend subtrees this function never imports so the
 # artifact stays small. The remaining modules (notifications, database, shared,
@@ -111,12 +108,13 @@ resource "aws_lambda_function" "alert_email" {
   filename         = data.archive_file.alert_email.output_path
   source_code_hash = data.archive_file.alert_email.output_base64sha256
 
-  # Runtime Python deps (sqlalchemy, psycopg2-binary, python-dotenv) are NOT in
-  # the zip -- attach them via Lambda Layer ARN(s). boto3 comes from the runtime
-  # and must not be in a layer. Empty by default (infra-only, not invokable);
-  # the schedule precondition blocks ENABLED unattended sends until a layer is
-  # supplied so a fresh apply cannot fire into a Lambda that fails at import.
-  layers = var.alert_email_lambda_layer_arns
+  # Runtime Python deps come from Lambda Layer(s). By default the Terraform-built
+  # layer from layer.tf (aws_lambda_layer_version.alert_email) is attached first;
+  # any ARNs in var.alert_email_lambda_layer_arns are appended for shared-lib
+  # scenarios. boto3 comes from the runtime and must not be in any layer.
+  # local.alert_email_effective_layers is the single source of truth also used by
+  # the schedule precondition, so the two cannot drift.
+  layers = local.alert_email_effective_layers
 
   environment {
     variables = {
@@ -230,16 +228,17 @@ resource "aws_scheduler_schedule" "alert_email_daily" {
 
   lifecycle {
     precondition {
-      condition     = !var.alert_email_schedule_enabled || length(var.alert_email_lambda_layer_arns) > 0
+      condition     = !var.alert_email_schedule_enabled || length(local.alert_email_effective_layers) > 0
       error_message = <<-EOT
-        alert_email_schedule_enabled is true but alert_email_lambda_layer_arns is
-        empty. The Terraform zip packages app code only; runtime deps
+        alert_email_schedule_enabled is true but no effective Lambda Layer is
+        attached. The Terraform zip packages app code only; runtime deps
         (sqlalchemy, psycopg2-binary, python-dotenv) must come from a Lambda
-        Layer. Enabling the unattended daily schedule without a layer would fire
-        into a Lambda that fails at import time on every invocation. Either set
-        alert_email_schedule_enabled=false (default; infrastructure-only deploy;
-        do not invoke the Lambda until dependencies are layered) or supply
-        alert_email_lambda_layer_arns with one or more layer ARN(s).
+        Layer. Either keep create_alert_email_lambda_layer=true (default;
+        Terraform builds the layer) or supply one or more ARNs via
+        alert_email_lambda_layer_arns. Enabling the unattended daily schedule
+        with no layer would fire into a Lambda that fails at import time on
+        every invocation. Keep alert_email_schedule_enabled=false (default;
+        infrastructure-only deploy) until a layer is verified.
       EOT
     }
   }
