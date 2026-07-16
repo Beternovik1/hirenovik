@@ -80,16 +80,20 @@ resource "aws_iam_role_policy_attachment" "alert_email_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-# SES send permission is attached ONLY when Terraform owns the sender identity
-# and therefore owns the least-privilege ses:SendEmail managed policy. When
-# create_ses_sender_identity is false, the policy ARN is an empty string and
-# this attachment is skipped (count = 0) rather than creating an invalid
-# reference. A real send in that state will fail at SES; dry-run (the default)
-# never reaches SES, so safety is preserved.
+# SES send permission is attached when Terraform owns the sender identity via
+# the managed policy below. When the identity is manual, an equivalent inline
+# policy is attached instead (see aws_iam_role_policy.alert_email_ses_manual).
 resource "aws_iam_role_policy_attachment" "alert_email_ses" {
   count      = var.create_ses_sender_identity ? 1 : 0
   role       = aws_iam_role.alert_email_lambda.name
   policy_arn = aws_iam_policy.ses_send_email[0].arn
+}
+
+resource "aws_iam_role_policy" "alert_email_ses_manual" {
+  count  = var.create_ses_sender_identity ? 0 : (local.has_ses_sender_identity ? 1 : 0)
+  name   = "hirenovik-alert-email-ses-send-${var.environment}"
+  role   = aws_iam_role.alert_email_lambda.id
+  policy = data.aws_iam_policy_document.ses_send_email[0].json
 }
 
 # ---------------------------------------------------------------------------
