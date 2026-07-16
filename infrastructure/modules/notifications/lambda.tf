@@ -119,7 +119,6 @@ resource "aws_lambda_function" "alert_email" {
   environment {
     variables = {
       DATABASE_URL          = var.database_url
-      AWS_REGION            = var.region
       SES_FROM_EMAIL        = var.ses_from_email
       ALERT_RECIPIENT_EMAIL = var.alert_recipient_email
       ALERT_EMAIL_DRY_RUN   = var.alert_email_dry_run
