@@ -1,6 +1,8 @@
 annotated-types==0.7.0
 asarPy==1.0.1
 beautifulsoup4==4.14.3
+# Versioned schema migrations wired to the SQLAlchemy ORM models.
+alembic==1.18.5
 boto3==1.43.11
 botocore==1.43.11
 certifi==2026.1.4
@@ -13,6 +15,8 @@ fpdf2==2.8.6
 greenlet==3.3.1
 idna==3.11
 jmespath==1.1.0
+# Mako is a runtime dependency required by Alembic to render migration scripts.
+Mako==1.3.12
 markdownify==0.13.1
 # ------------------------------------------------------------------
 # NLP + API dependencies (needed in Docker image AND host)

@@ -20,6 +20,7 @@ Freshness is applied in TWO layers:
   :func:`shared.utils.aware_utc`, handling naive driver values safely. The SQL
   bound is a coarse optimization; the Python filter is the authority.
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,6 +50,7 @@ def fetch_digest_candidates(
     niche: str = DIGEST_NICHE,
     now: datetime | None = None,
     freshness_days: int = DIGEST_DEFAULT_FRESHNESS_DAYS,
+    exclude_job_ids: set[int] | None = None,
 ) -> list[Job]:
     """Query NEW Industrial Bajío jobs with a non-empty description.
 
@@ -60,12 +62,23 @@ def fetch_digest_candidates(
     Python. Passing ``now=None`` skips the date lower bound (legacy behavior) for
     callers that prefer to load the full candidate set.
 
+    Profile-scoped send history is honored via ``exclude_job_ids``: when a
+    non-empty set is provided (typically from
+    :func:`notifications.notification_log.get_sent_job_ids`), a
+    ``Job.id NOT IN (...)`` predicate drops jobs already recorded as sent for
+    this profile, so a job is selected at most once per profile across digest
+    runs. An empty set or ``None`` skips the predicate entirely -- this avoids
+    emitting ``NOT IN (NULL)``-shaped queries on the empty-history path and
+    keeps the common fresh-install case cheap.
+
     Args:
         session: SQLAlchemy ORM session.
         niche: Industry niche to scope the query to.
         now: Reference datetime (aware or naive) for the coarse freshness lower
             bound. Normalized to aware UTC before binding.
         freshness_days: Coarse freshness window length in days.
+        exclude_job_ids: Job ids to drop from the candidate set (already sent
+            for the digest profile). ``None`` or empty skips the exclusion.
 
     Returns:
         List of ``Job`` rows matching the predicates, in unspecified database
@@ -80,6 +93,8 @@ def fetch_digest_candidates(
     if now is not None:
         lower_bound = aware_utc(now) - timedelta(days=freshness_days)
         filters.append(Job.date_scraped >= lower_bound)
+    if exclude_job_ids:
+        filters.append(Job.id.notin_(exclude_job_ids))
     return session.query(Job).filter(*filters).all()
 
 
@@ -92,6 +107,7 @@ def build_digest(
     freshness_days: int = DIGEST_DEFAULT_FRESHNESS_DAYS,
     limit: int = DIGEST_DEFAULT_LIMIT,
     fallback_limit: int = DIGEST_DEFAULT_FALLBACK_LIMIT,
+    exclude_job_ids: set[int] | None = None,
 ) -> DigestPayload:
     """Fetch digest candidates from the DB and build the ranked digest payload.
 
@@ -101,6 +117,13 @@ def build_digest(
     :func:`select_digest`. Both the primary cap (``limit``) and the secondary
     fallback cap (``fallback_limit``) are forwarded so the DB path stays
     configurable alongside the pure selector.
+
+    Profile-scoped sent history is passed through to
+    :func:`fetch_digest_candidates` via ``exclude_job_ids``: jobs already
+    recorded for the digest profile are dropped in SQL before the selector ever
+    sees them, so a job is sent at most once per profile. Callers that supply
+    the set are responsible for using the same SQLAlchemy session used to build
+    the digest, so the read and the candidate query share a single connection.
 
     Args:
         session: SQLAlchemy ORM session.
@@ -114,6 +137,9 @@ def build_digest(
         limit: Maximum PRIMARY jobs to return.
         fallback_limit: Maximum SECONDARY (fallback) jobs to return. Set to 0 to
             disable the secondary section.
+        exclude_job_ids: Job ids to drop from the candidate set (already sent for
+            the digest profile). ``None`` or empty skips the SQL exclusion and is
+            the safe default for callers that do not yet wire the notification log.
 
     Returns:
         A :class:`DigestPayload` with the ranked selected primary jobs and the
@@ -128,12 +154,18 @@ def build_digest(
         resolved_profile = get_alert_profile(DIGEST_PROFILE_NAME)
 
     rows = fetch_digest_candidates(
-        session, niche=niche, now=now, freshness_days=freshness_days
+        session,
+        niche=niche,
+        now=now,
+        freshness_days=freshness_days,
+        exclude_job_ids=exclude_job_ids,
     )
     logger.info(
-        "Fetched %d NEW '%s' digest candidates from DB (before exact freshness/fit filter).",
+        "Fetched %d NEW '%s' digest candidates from DB (before exact freshness/fit filter; "
+        "excluded %d sent job id(s)).",
         len(rows),
         niche,
+        len(exclude_job_ids) if exclude_job_ids else 0,
     )
     return select_digest(
         rows,

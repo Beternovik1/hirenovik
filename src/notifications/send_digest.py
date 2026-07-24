@@ -33,6 +33,7 @@ Env vars:
         An invalid value (e.g. a typo like ``"flase"``) raises :class:`ValueError`
         rather than silently defaulting to a real send.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,10 +45,11 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import db_connect
-from notifications.digest import DigestPayload
+from notifications.digest import DIGEST_PROFILE_NAME, DigestPayload
 from notifications.digest_repository import build_digest
 from notifications.email_sender import EmailConfig, EmailResult, send_email
 from notifications.html_renderer import render_digest_html
+from notifications.notification_log import get_sent_job_ids, record_sent_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +71,66 @@ def _open_session() -> Session:
 
 
 def _default_build_digest(now: datetime) -> DigestPayload:
-    """Build the real Industrial Bajío digest from Supabase and close the session."""
+    """Build the real Industrial Bajío digest from Supabase and close the session.
+
+    Wires profile-scoped sent history into the digest: jobs already recorded in
+    ``notification_log`` for :data:`DIGEST_PROFILE_NAME` are dropped from the
+    candidate set by ``build_digest`` before the selector ranks them, so a job
+    is sent at most once per profile across runs. The sent-history read and the
+    candidate query share a single session (no second connection) to keep the
+    read snapshot consistent and avoid an unnecessary engine round-trip.
+    """
     session = _open_session()
     try:
-        return build_digest(session, now)
+        sent_ids = get_sent_job_ids(session, DIGEST_PROFILE_NAME)
+        return build_digest(session, now, exclude_job_ids=sent_ids)
+    finally:
+        session.close()
+
+
+# Recorder contract: payload + the real send's SES message id + the single
+# digest-run timestamp. Injected into run_send_digest so tests avoid the DB.
+RecordSentDigestFn = Callable[[DigestPayload, str, datetime], None]
+
+
+def _default_record_sent_digest(
+    payload: DigestPayload,
+    *,
+    ses_message_id: str,
+    sent_at: datetime,
+) -> None:
+    """Open a session and record every job sent in ``payload`` (primary + fallback).
+
+    Appends one audit row per job id (primary ``jobs`` plus ``fallback_jobs``),
+    all sharing the single ``sent_at`` so the ``(job_id, profile_name,
+    sent_at)`` idempotence key collides on a re-record and the configured
+    ``ON CONFLICT DO NOTHING`` keeps the re-send idempotent. The profile is
+    taken from ``payload.profile_name`` (which equals
+    :data:`DIGEST_PROFILE_NAME` in production) so the recorder and the
+    exclusion selector stay anchored to the same profile key.
+
+    The session is closed in ``finally`` even when recording raises so an
+    audit-side failure never leaks the connection; the exception propagates so
+    the CLI surfaces the audit failure loudly rather than silently skipping the
+    ledger write.
+
+    Args:
+        payload: The digest that was just sent. Both ``payload.jobs`` and
+            ``payload.fallback_jobs`` contribute ids; the gate is mutually
+            exclusive so there is no primary/fallback overlap in practice.
+        ses_message_id: SES MessageId returned by the real send.
+        sent_at: Single digest-run timestamp shared by every recorded row.
+    """
+    session = _open_session()
+    job_ids = [job.id for job in payload.jobs] + [job.id for job in payload.fallback_jobs]
+    try:
+        record_sent_jobs(
+            session,
+            job_ids,
+            profile_name=payload.profile_name,
+            sent_at=sent_at,
+            ses_message_id=ses_message_id,
+        )
     finally:
         session.close()
 
@@ -164,6 +222,7 @@ def run_send_digest(
     now: datetime | None = None,
     build_digest_fn: Callable[[datetime], DigestPayload] | None = None,
     render_fn: Callable[[DigestPayload], str] | None = None,
+    record_sent_fn: RecordSentDigestFn | None = None,
 ) -> EmailResult:
     """Build, render, and send (or dry-run) the daily Industrial Bajío digest.
 
@@ -174,6 +233,12 @@ def run_send_digest(
     2. Render the payload to HTML via the pure renderer.
     3. Send via :func:`notifications.email_sender.send_email` with the
        resolved dry-run flag.
+    4. After a real (non-dry-run) send only, record one audit row per job via
+       the recorder so the next digest run excludes these jobs. Recording is
+       skipped on dry-run and never reached if :func:`send_email` raises (the
+       recorder call sits after a successful send, so a send failure records
+       nothing). A single ``resolved_now`` timestamp is shared by every audit
+       row in this email.
 
     Args:
         config: Sender/recipient/region configuration. On a real send,
@@ -182,12 +247,18 @@ def run_send_digest(
             ``from_email`` / ``recipient_email`` are tolerated.
         dry_run: When ``True``, no SES call is made.
         now: Reference datetime for the digest freshness window. ``None``
-            resolves to ``datetime.now(timezone.utc)``.
+            resolves to ``datetime.now(timezone.utc)``. The same resolved value
+            is reused as the audit ``sent_at`` so every row in one email shares
+            one timestamp.
         build_digest_fn: Callable ``(now: datetime) -> DigestPayload``. ``None``
             uses :func:`_default_build_digest`, which opens a real Supabase
             session. Inject a fake in tests to avoid the DB.
         render_fn: Callable ``(DigestPayload) -> str``. ``None`` uses
             :func:`notifications.html_renderer.render_digest_html`.
+        record_sent_fn: Callable ``(payload, ses_message_id, sent_at) -> None``
+            invoked only after a real send. ``None`` uses
+            :func:`_default_record_sent_digest`, which opens a real Supabase
+            session. Inject a fake in tests to avoid the DB.
 
     Returns:
         The :class:`EmailResult` from :func:`send_email`.
@@ -195,6 +266,7 @@ def run_send_digest(
     resolved_now = now if now is not None else datetime.now(UTC)
     build = build_digest_fn if build_digest_fn is not None else _default_build_digest
     render = render_fn if render_fn is not None else render_digest_html
+    record = record_sent_fn if record_sent_fn is not None else _default_record_sent_digest
 
     payload = build(resolved_now)
     html = render(payload)
@@ -206,7 +278,15 @@ def run_send_digest(
         len(payload.fallback_jobs),
         dry_run,
     )
-    return send_email(config, subject=subject, html_body=html, dry_run=dry_run)
+    result = send_email(config, subject=subject, html_body=html, dry_run=dry_run)
+
+    # Record audit rows only after a real send. A dry-run records nothing, and a
+    # send_email raise records nothing because this line is never reached. The
+    # single resolved_now is reused as the audit sent_at so every row in this
+    # email shares one timestamp (the idempotence-key contract).
+    if not result.dry_run:
+        record(payload, ses_message_id=result.message_id, sent_at=resolved_now)
+    return result
 
 
 def _cli() -> None:

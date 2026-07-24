@@ -16,6 +16,8 @@ dependencies = [
     "python-jobspy",
     "requests",
     "SQLAlchemy",
+    # Alembic drives versioned schema migrations wired to the SQLAlchemy models.
+    "alembic>=1.13,<2.0",
 ]
 
 [tool.ruff]

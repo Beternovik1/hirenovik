@@ -31,6 +31,10 @@ from notifications.digest_repository import build_digest, fetch_digest_candidate
 from notifications.profiles import INDUSTRIAL_IRAPUATO_BAJIO_PROFILE
 from shared.utils import aware_utc
 
+# ``notin_`` compiles to the ``not_in_op`` operator; alias it here so the
+# exclude tests can assert presence by operator identity (drift-resistant).
+NOT_IN_OP = sa_operators.not_in_op
+
 PROFILE = INDUSTRIAL_IRAPUATO_BAJIO_PROFILE
 ALERT_NICHE = "Industrial Bajío"
 _UTC = timezone.utc
@@ -267,9 +271,7 @@ class TestBuildDigest:
         fresh_fit = make_job(
             1, title="SAP WM Analyst", raw_location="Silao, Guanajuato", days_ago=1
         )
-        stale = make_job(
-            2, title="SAP WM Analyst", raw_location="Silao, Guanajuato", days_ago=30
-        )
+        stale = make_job(2, title="SAP WM Analyst", raw_location="Silao, Guanajuato", days_ago=30)
         wrong_city = make_job(3, title="SAP WM Analyst", raw_location="Queretaro, Queretaro")
         session = _RecordingSession([fresh_fit, stale, wrong_city])
 
@@ -341,9 +343,7 @@ class TestBuildDigest:
         fallback.career = "Soldador"
         session = _RecordingSession([strict, fallback])
 
-        payload = build_digest(
-            session, NOW, profile=PROFILE, limit=10, fallback_limit=5
-        )
+        payload = build_digest(session, NOW, profile=PROFILE, limit=10, fallback_limit=5)
 
         assert [job.id for job in payload.jobs] == [1]
         assert [job.id for job in payload.fallback_jobs] == [2]
@@ -360,9 +360,97 @@ class TestBuildDigest:
         fallback.career = "Soldador"
         session = _RecordingSession([fallback])
 
-        payload = build_digest(
-            session, NOW, profile=PROFILE, limit=10, fallback_limit=0
-        )
+        payload = build_digest(session, NOW, profile=PROFILE, limit=10, fallback_limit=0)
 
         assert payload.fallback_jobs == ()
         assert payload.count == 0
+
+
+# ---------------------------------------------------------------------------
+# exclude_job_ids: profile-scoped NOT IN exclusion (read side, Slice 4)
+# ---------------------------------------------------------------------------
+
+
+def _has_notin_by_column(pred_map, column) -> bool:
+    """Return True if ``column`` has a ``NOT IN`` predicate captured."""
+    return any(found_op is NOT_IN_OP for found_op, _ in pred_map.get(column, []))
+
+
+def _notin_bind_value(pred_map, column):
+    """Return the bind collection of the first ``NOT IN`` predicate on ``column``."""
+    for found_op, value in pred_map.get(column, []):
+        if found_op is NOT_IN_OP:
+            return value
+    return None
+
+
+class TestFetchDigestCandidatesExcludeJobIds:
+    def test_nonempty_exclude_adds_job_id_notin_predicate(self):
+        """A non-empty ``exclude_job_ids`` set adds ``Job.id NOT IN (...)`` so
+        already-sent jobs are dropped in SQL before the selector ranks them."""
+        session = _RecordingSession([make_job(1)])
+        excluded = {10, 20, 30}
+
+        fetch_digest_candidates(session, niche=ALERT_NICHE, now=NOW, exclude_job_ids=excluded)
+
+        preds = session.last_query.predicates_by_column()
+        assert _has_notin_by_column(preds, "id")
+        # notin_ binds the collection; assert membership regardless of order.
+        assert set(_notin_bind_value(preds, "id")) == excluded
+        # The baseline predicates still hold.
+        assert _find_predicate(preds, "industry_niche", op.eq) == ALERT_NICHE
+        assert _find_predicate(preds, "status", op.eq) == "NEW"
+
+    def test_none_exclude_skips_notin_predicate(self):
+        """``None`` skips the exclusion entirely so the empty-history path does
+        not emit a no-op ``NOT IN (NULL)``-shaped query."""
+        session = _RecordingSession([make_job(1)])
+
+        fetch_digest_candidates(session, niche=ALERT_NICHE, now=NOW, exclude_job_ids=None)
+
+        preds = session.last_query.predicates_by_column()
+        assert "id" not in preds
+        assert _find_predicate(preds, "industry_niche", op.eq) == ALERT_NICHE
+
+    def test_empty_exclude_skips_notin_predicate(self):
+        """An empty set is equivalent to ``None``: no ``id`` predicate is added."""
+        session = _RecordingSession([make_job(1)])
+
+        fetch_digest_candidates(session, niche=ALERT_NICHE, now=NOW, exclude_job_ids=set())
+
+        preds = session.last_query.predicates_by_column()
+        assert "id" not in preds
+
+    def test_exclude_passthrough_from_build_digest(self):
+        """``build_digest`` forwards ``exclude_job_ids`` to the candidate query,
+        and the exclude set reaches the SQL predicate. The selector then ranks
+        whatever candidates the DB returns."""
+        excluded = make_job(10, title="SAP WM Analyst", raw_location="Silao, Guanajuato")
+        kept = make_job(1, title="SAP WM Analyst", raw_location="Silao, Guanajuato")
+        # The recording fake session serves ALL preset rows regardless of filters
+        # (it does not execute SQL), so both jobs reach the selector. This test
+        # therefore proves the exclude set is forwarded to the predicate (the
+        # real DB would drop id 10 there); actual row-level exclusion is the
+        # database's responsibility, asserted structurally here via the predicate.
+        session = _RecordingSession([kept, excluded])
+
+        payload = build_digest(
+            session, NOW, profile=PROFILE, limit=10, exclude_job_ids={excluded.id}
+        )
+
+        preds = session.last_query.predicates_by_column()
+        assert _has_notin_by_column(preds, "id")
+        assert set(_notin_bind_value(preds, "id")) == {excluded.id}
+        # The selector ranks the served candidates (both, since the fake does
+        # not filter); the payload is correctly composed end-to-end.
+        assert set(job.id for job in payload.jobs) == {1, 10}
+
+    def test_build_digest_none_exclude_omits_notin_predicate(self):
+        """``build_digest(exclude_job_ids=None)`` (default) does not add an ``id``
+        predicate, preserving legacy behavior when sent-history is unwired."""
+        session = _RecordingSession([make_job(1)])
+
+        build_digest(session, NOW, profile=PROFILE, limit=10)
+
+        preds = session.last_query.predicates_by_column()
+        assert "id" not in preds
