@@ -9,6 +9,7 @@ Search routing is profile-driven via ``SEARCH_PROFILE`` (``tech_mx`` or
 legacy ``WORKER_NAME`` routing when set, so existing GitHub Actions behavior is
 preserved by leaving ``SEARCH_PROFILE`` unset.
 """
+
 from __future__ import annotations
 
 import logging
@@ -18,6 +19,29 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 WORKER_NAME = os.getenv("WORKER_NAME", "Local_Test")
+
+
+def get_database_url() -> str:
+    """Return the configured DATABASE_URL, normalized for SQLAlchemy 2.x.
+
+    SQLAlchemy 2.x rejects the legacy ``postgres://`` scheme; this helper
+    normalizes it to ``postgresql://`` so every caller gets a usable URL from
+    the single source of truth (CONVENTIONS.md section 1). ``models.db_connect``
+    still performs its own normalization for now, but new database tooling
+    (e.g. the Alembic env) routes through this helper instead of reading
+    ``os.getenv`` directly.
+
+    Returns:
+        The normalized PostgreSQL connection string.
+
+    Raises:
+        ValueError: If ``DATABASE_URL`` is not present in the environment.
+    """
+    raw = os.getenv("DATABASE_URL")
+    if not raw:
+        raise ValueError("DATABASE_URL not found in environment")
+    return raw.replace("postgres://", "postgresql://")
+
 
 # Search profile routing. When set, takes precedence over WORKER_NAME.
 # An unknown profile logs a warning and falls back to DEFAULT_SEARCH_PROFILE.
@@ -133,9 +157,7 @@ def get_search_config_for_profile(profile_name: str) -> list[tuple[str, str, str
     if config is None:
         known = sorted(SEARCH_PROFILES)
         logger.error("Unknown search profile '%s'. Known profiles: %s", profile_name, known)
-        raise ValueError(
-            f"Unknown search profile '{profile_name}'. Known profiles: {known}"
-        )
+        raise ValueError(f"Unknown search profile '{profile_name}'. Known profiles: {known}")
     return list(config)
 
 
@@ -190,11 +212,7 @@ def _parse_daily_scout_profiles(env_value: str) -> list[str]:
         Ordered list of profile names, or ``list(_DEFAULT_DAILY_SCOUT_PROFILES)``
         when ``env_value`` has no non-blank entries.
     """
-    parsed = [
-        name.strip()
-        for name in env_value.split(",")
-        if name.strip()
-    ]
+    parsed = [name.strip() for name in env_value.split(",") if name.strip()]
     return parsed or list(_DEFAULT_DAILY_SCOUT_PROFILES)
 
 
