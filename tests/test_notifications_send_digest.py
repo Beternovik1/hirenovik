@@ -211,11 +211,16 @@ class TestRunSendDigest:
         """Dry-run delegates to send_email with dry_run=True (no SES)."""
         payload = make_payload([make_job()])
         config = EmailConfig(
-            region="us-east-1", from_email="alerts@example.com", recipient_email="b@x.com",
+            region="us-east-1",
+            from_email="alerts@example.com",
+            recipient_email="b@x.com",
         )
         fake_send = MagicMock(
             return_value=EmailResult(
-                dry_run=True, message_id="", recipient="b@x.com", subject="Industrial Bajio digest: 1 new job(s)",
+                dry_run=True,
+                message_id="",
+                recipient="b@x.com",
+                subject="Industrial Bajio digest: 1 new job(s)",
             ),
         )
         monkeypatch.setattr(send_digest_mod, "send_email", fake_send)
@@ -234,13 +239,17 @@ class TestRunSendDigest:
     def test_real_send_builds_subject_and_delegates_to_sender(self, monkeypatch):
         payload = make_payload([make_job(), make_job(2)], fallback_jobs=[make_job(3)])
         config = EmailConfig(
-            region="us-east-1", from_email="alerts@example.com", recipient_email="b@x.com",
+            region="us-east-1",
+            from_email="alerts@example.com",
+            recipient_email="b@x.com",
         )
         build = builder_returning(payload)
         render = renderer_returning("<html>digest</html>")
         fake_send = MagicMock(
             return_value=EmailResult(
-                dry_run=False, message_id="ses-abc", recipient="b@x.com",
+                dry_run=False,
+                message_id="ses-abc",
+                recipient="b@x.com",
                 subject="Industrial Bajio digest: 3 new job(s)",
             ),
         )
@@ -273,7 +282,9 @@ class TestRunSendDigest:
         boto3 client, so this stays network-free.
         """
         payload = make_payload([make_job()])
-        config = EmailConfig(region="us-east-1", from_email="alerts@example.com", recipient_email="")
+        config = EmailConfig(
+            region="us-east-1", from_email="alerts@example.com", recipient_email=""
+        )
 
         with pytest.raises(ValueError, match="recipient_email"):
             run_send_digest(
@@ -296,7 +307,9 @@ class TestRunSendDigest:
             return "<html>digest</html>"
 
         config = EmailConfig(
-            region="us-east-1", from_email="alerts@example.com", recipient_email="b@x.com",
+            region="us-east-1",
+            from_email="alerts@example.com",
+            recipient_email="b@x.com",
         )
 
         run_send_digest(
@@ -342,7 +355,9 @@ class TestRealRendererIntegration:
 
         payload = make_payload([make_job()])
         config = EmailConfig(
-            region="us-east-1", from_email="alerts@example.com", recipient_email="b@x.com",
+            region="us-east-1",
+            from_email="alerts@example.com",
+            recipient_email="b@x.com",
         )
 
         result = run_send_digest(
@@ -356,3 +371,92 @@ class TestRealRendererIntegration:
         assert result.dry_run is True
         # digest_subject in send_digest uses the same total as the renderer title.
         assert result.subject == "Industrial Bajio digest: 1 new job(s)"
+
+
+class TestDefaultBuildDigestSentHistoryWiring:
+    """Slice 4: the default builder reads sent-history and wires it into build_digest
+    using a single shared session (no second connection)."""
+
+    def test_reads_sent_ids_for_digest_profile_and_passes_to_build_digest(self, monkeypatch):
+        from notifications.digest import DIGEST_PROFILE_NAME
+
+        fake_session = MagicMock(name="session")
+        fake_sent = {101, 202}
+        fake_payload = make_payload([make_job()])
+
+        monkeypatch.setattr(send_digest_mod, "_open_session", lambda: fake_session)
+        mock_get_sent = MagicMock(return_value=fake_sent, name="get_sent_job_ids")
+        monkeypatch.setattr(send_digest_mod, "get_sent_job_ids", mock_get_sent)
+        mock_build = MagicMock(return_value=fake_payload, name="build_digest")
+        monkeypatch.setattr(send_digest_mod, "build_digest", mock_build)
+
+        from notifications.send_digest import _default_build_digest
+
+        result = _default_build_digest(NOW)
+
+        # Sent-history read is scoped to the registered digest profile.
+        mock_get_sent.assert_called_once_with(fake_session, DIGEST_PROFILE_NAME)
+        # build_digest receives the same session and the exclude set.
+        mock_build.assert_called_once()
+        build_call = mock_build.call_args
+        assert build_call.args[0] is fake_session
+        assert build_call.args[1] == NOW
+        assert build_call.kwargs["exclude_job_ids"] == fake_sent
+        assert result is fake_payload
+
+    def test_uses_single_session_for_read_and_build(self, monkeypatch):
+        """The sent-history read and the candidate query share one session, so a
+        real send does not open a second engine connection."""
+        fake_session = MagicMock(name="session")
+        # Track the number of sessions opened: _open_session is the only entry point.
+        open_count = {"n": 0}
+
+        def _open():
+            open_count["n"] += 1
+            return fake_session
+
+        monkeypatch.setattr(send_digest_mod, "_open_session", _open)
+        monkeypatch.setattr(send_digest_mod, "get_sent_job_ids", MagicMock(return_value=set()))
+        monkeypatch.setattr(
+            send_digest_mod,
+            "build_digest",
+            MagicMock(return_value=make_payload([make_job()])),
+        )
+
+        from notifications.send_digest import _default_build_digest
+
+        _default_build_digest(NOW)
+
+        assert open_count["n"] == 1
+
+    def test_closes_session_even_on_build_error(self, monkeypatch):
+        """A build_digest failure must still close the shared session."""
+        fake_session = MagicMock(name="session")
+        monkeypatch.setattr(send_digest_mod, "_open_session", lambda: fake_session)
+        monkeypatch.setattr(send_digest_mod, "get_sent_job_ids", MagicMock(return_value=set()))
+        monkeypatch.setattr(
+            send_digest_mod, "build_digest", MagicMock(side_effect=RuntimeError("boom"))
+        )
+
+        from notifications.send_digest import _default_build_digest
+
+        with pytest.raises(RuntimeError, match="boom"):
+            _default_build_digest(NOW)
+
+        fake_session.close.assert_called_once()
+
+    def test_empty_sent_history_still_passes_exclude_set_to_build_digest(self, monkeypatch):
+        """An empty sent set (fresh install) is forwarded as ``exclude_job_ids=set()``,
+        which fetch_digest_candidates treats as a no-op -- the default builder does
+        not special-case the empty path."""
+        fake_session = MagicMock(name="session")
+        monkeypatch.setattr(send_digest_mod, "_open_session", lambda: fake_session)
+        monkeypatch.setattr(send_digest_mod, "get_sent_job_ids", MagicMock(return_value=set()))
+        mock_build = MagicMock(return_value=make_payload([make_job()]))
+        monkeypatch.setattr(send_digest_mod, "build_digest", mock_build)
+
+        from notifications.send_digest import _default_build_digest
+
+        _default_build_digest(NOW)
+
+        assert mock_build.call_args.kwargs["exclude_job_ids"] == set()

@@ -33,6 +33,7 @@ Env vars:
         An invalid value (e.g. a typo like ``"flase"``) raises :class:`ValueError`
         rather than silently defaulting to a real send.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,10 +45,11 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session, sessionmaker
 
 from database.models import db_connect
-from notifications.digest import DigestPayload
+from notifications.digest import DIGEST_PROFILE_NAME, DigestPayload
 from notifications.digest_repository import build_digest
 from notifications.email_sender import EmailConfig, EmailResult, send_email
 from notifications.html_renderer import render_digest_html
+from notifications.notification_log import get_sent_job_ids
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +71,19 @@ def _open_session() -> Session:
 
 
 def _default_build_digest(now: datetime) -> DigestPayload:
-    """Build the real Industrial Bajío digest from Supabase and close the session."""
+    """Build the real Industrial Bajío digest from Supabase and close the session.
+
+    Wires profile-scoped sent history into the digest: jobs already recorded in
+    ``notification_log`` for :data:`DIGEST_PROFILE_NAME` are dropped from the
+    candidate set by ``build_digest`` before the selector ranks them, so a job
+    is sent at most once per profile across runs. The sent-history read and the
+    candidate query share a single session (no second connection) to keep the
+    read snapshot consistent and avoid an unnecessary engine round-trip.
+    """
     session = _open_session()
     try:
-        return build_digest(session, now)
+        sent_ids = get_sent_job_ids(session, DIGEST_PROFILE_NAME)
+        return build_digest(session, now, exclude_job_ids=sent_ids)
     finally:
         session.close()
 
