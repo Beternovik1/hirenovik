@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Hirenovik job-market analytics</title>
+  <desc id="desc">A dark technical analytics board showing a job listing transformed into an embedding and topic, then into salary and trend signals.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="420" rx="28" fill="#020617"/>
+  <path d="M56 32 H1144" stroke="#1e293b"/>
+  <text x="56" y="67" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">JOB-MARKET ANALYTICS / v1.0.0</text>
+
+  <g id="identity">
+    <text x="56" y="158" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="70" font-weight="700" letter-spacing="-2">Hirenovik</text>
+    <text x="58" y="205" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24">From fragmented job listings to</text>
+    <text x="58" y="240" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="24" font-weight="600">searchable market intelligence.</text>
+
+    <g transform="translate(58 286)">
+      <rect width="136" height="42" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <circle cx="22" cy="21" r="5" fill="#34d399"/>
+      <text x="38" y="28" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">COLLECT</text>
+      <rect x="148" width="124" height="42" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <circle cx="170" cy="21" r="5" fill="#0ea5e9"/>
+      <text x="186" y="28" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">MODEL</text>
+      <rect x="284" width="134" height="42" rx="8" fill="#0f172a" stroke="#1e293b"/>
+      <circle cx="306" cy="21" r="5" fill="#34d399"/>
+      <text x="322" y="28" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">SURFACE</text>
+    </g>
+  </g>
+
+  <g id="signal-flow" transform="translate(560 86)">
+    <path d="M174 116 H220" stroke="#34d399" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M404 116 H450" stroke="#34d399" stroke-width="2" marker-end="url(#arrow)"/>
+
+    <g id="listing-card">
+      <rect width="174" height="232" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="18" y="32" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">01 / LISTING</text>
+      <rect x="18" y="54" width="42" height="42" rx="8" fill="#1e293b"/>
+      <path d="M30 66 h18 v18 H30z M34 62 h10 v5 H34z" fill="none" stroke="#34d399" stroke-width="2"/>
+      <text x="18" y="127" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="600">Data Engineer</text>
+      <text x="18" y="155" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="17">Python · SQL · AWS</text>
+      <path d="M18 180 H156 M18 195 H130 M18 210 H145" stroke="#1e293b" stroke-width="7" stroke-linecap="round"/>
+    </g>
+
+    <g id="semantic-card" transform="translate(230 0)">
+      <rect width="174" height="232" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="18" y="32" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">02 / SEMANTICS</text>
+      <g transform="translate(27 66)">
+        <path d="M18 50 L60 18 L112 43 L86 92 L34 96 Z" fill="none" stroke="#1e293b" stroke-width="2"/>
+        <path d="M18 50 L86 92 M60 18 L34 96 M112 43 L18 50" stroke="#0ea5e9" stroke-width="1.5"/>
+        <circle cx="18" cy="50" r="7" fill="#34d399"/>
+        <circle cx="60" cy="18" r="6" fill="#0ea5e9"/>
+        <circle cx="112" cy="43" r="8" fill="#34d399"/>
+        <circle cx="86" cy="92" r="6" fill="#0ea5e9"/>
+        <circle cx="34" cy="96" r="7" fill="#34d399"/>
+      </g>
+      <text x="18" y="194" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="600">Embedding + topic</text>
+      <text x="18" y="219" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">BERTopic / FAISS</text>
+    </g>
+
+    <g id="signal-card" transform="translate(460 0)">
+      <rect width="174" height="232" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="18" y="32" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">03 / SIGNAL</text>
+      <path d="M18 105 L51 89 L81 99 L111 63 L156 47" fill="none" stroke="#34d399" stroke-width="3"/>
+      <path d="M18 122 H156" stroke="#1e293b"/>
+      <text x="18" y="157" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20" font-weight="600">Salary + trend</text>
+      <text x="18" y="185" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">SEARCHABLE</text>
+      <text x="18" y="211" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">API / DASHBOARD</text>
+    </g>
+  </g>
+
+  <g id="snapshot-metadata" transform="translate(560 344)">
+    <text x="0" y="20" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">SNAPSHOT EVIDENCE</text>
+    <text x="188" y="20" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">26,619 ROWS</text>
+    <text x="350" y="20" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">26 COLUMNS</text>
+    <text x="504" y="20" fill="#f1f5f9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="700">~4.5 MONTHS</text>
+  </g>
+</svg>

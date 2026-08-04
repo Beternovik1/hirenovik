@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+  <title id="title">Hirenovik system architecture</title>
+  <desc id="desc">A five-stage architecture showing collection, storage, intelligence, API delivery, product surfaces, and supporting AWS operations.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="650" rx="28" fill="#020617"/>
+  <text x="56" y="62" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18" letter-spacing="2">SYSTEM MAP / DATA TO DECISION</text>
+  <text x="56" y="111" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="42" font-weight="700">One pipeline, multiple market signals</text>
+  <text x="56" y="146" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">Collection and enrichment feed reusable NLP, ML, API, and product layers.</text>
+
+  <g id="main-flow" transform="translate(56 196)">
+    <path d="M200 130 H230 M424 130 H454 M648 130 H678 M872 130 H902" stroke="#34d399" stroke-width="3" marker-end="url(#arrow)"/>
+
+    <g id="collect">
+      <rect width="200" height="260" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="20" y="37" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">01 / COLLECT</text>
+      <text x="20" y="78" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="650">Job sources</text>
+      <text x="20" y="113" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Search profiles</text>
+      <text x="20" y="143" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Scraping pipeline</text>
+      <text x="20" y="173" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Local enrichment</text>
+      <path d="M20 205 H180" stroke="#1e293b"/>
+      <text x="20" y="236" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">STRUCTURED JOBS</text>
+    </g>
+
+    <g id="store" transform="translate(224 0)">
+      <rect width="200" height="260" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="20" y="37" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">02 / STORE</text>
+      <text x="20" y="78" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="650">Data layer</text>
+      <text x="20" y="113" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Supabase</text>
+      <text x="20" y="143" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">PostgreSQL</text>
+      <text x="20" y="173" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">S3 exports</text>
+      <path d="M20 205 H180" stroke="#1e293b"/>
+      <text x="20" y="236" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">VERSIONED DATA</text>
+    </g>
+
+    <g id="understand" transform="translate(448 0)">
+      <rect width="200" height="260" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="20" y="37" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">03 / UNDERSTAND</text>
+      <text x="20" y="78" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="650">Intelligence</text>
+      <text x="20" y="113" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">BERTopic clusters</text>
+      <text x="20" y="143" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">FAISS index</text>
+      <text x="20" y="173" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">XGBoost model</text>
+      <path d="M20 205 H180" stroke="#1e293b"/>
+      <text x="20" y="236" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">MODEL ARTIFACTS</text>
+    </g>
+
+    <g id="serve" transform="translate(672 0)">
+      <rect width="200" height="260" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="20" y="37" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">04 / SERVE</text>
+      <text x="20" y="78" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="650">FastAPI</text>
+      <text x="20" y="113" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Jobs and topics</text>
+      <text x="20" y="143" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Search and trends</text>
+      <text x="20" y="173" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Skills and salary</text>
+      <path d="M20 205 H180" stroke="#1e293b"/>
+      <text x="20" y="236" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">TYPED ROUTES</text>
+    </g>
+
+    <g id="surface" transform="translate(896 0)">
+      <rect width="200" height="260" rx="14" fill="#0f172a" stroke="#1e293b"/>
+      <text x="20" y="37" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">05 / SURFACE</text>
+      <text x="20" y="78" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="23" font-weight="650">Next.js</text>
+      <text x="20" y="113" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Dashboard</text>
+      <text x="20" y="143" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Explore and search</text>
+      <text x="20" y="173" fill="#94a3b8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18">Predict and notify</text>
+      <path d="M20 205 H180" stroke="#1e293b"/>
+      <text x="20" y="236" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">USER DECISIONS</text>
+    </g>
+  </g>
+
+  <g id="operations" transform="translate(56 500)">
+    <rect width="1096" height="98" rx="14" fill="#0f172a" stroke="#1e293b"/>
+    <text x="22" y="36" fill="#34d399" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">CLOUD OPERATIONS</text>
+    <text x="22" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">Glue</text>
+    <circle cx="118" cy="63" r="3" fill="#1e293b"/>
+    <text x="138" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">SageMaker</text>
+    <circle cx="264" cy="63" r="3" fill="#1e293b"/>
+    <text x="284" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">Step Functions</text>
+    <circle cx="420" cy="63" r="3" fill="#1e293b"/>
+    <text x="440" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">Lambda</text>
+    <circle cx="515" cy="63" r="3" fill="#1e293b"/>
+    <text x="535" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">CloudWatch</text>
+    <circle cx="660" cy="63" r="3" fill="#1e293b"/>
+    <text x="680" y="69" fill="#f1f5f9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="20">SES</text>
+    <text x="1068" y="37" text-anchor="end" fill="#94a3b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">TERRAFORM MODULES</text>
+    <text x="1068" y="69" text-anchor="end" fill="#0ea5e9" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">ORCHESTRATE / OBSERVE / DELIVER</text>
+  </g>
+</svg>
