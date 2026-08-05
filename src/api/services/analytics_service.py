@@ -2,12 +2,18 @@
 
 import re
 from collections.abc import Iterable
+from datetime import datetime
 from decimal import Decimal
 from statistics import median
 
 from sqlalchemy.orm import Session
 
-from src.api.schemas.analytics import SalaryByRoleItem, SalaryByRoleResponse
+from src.api.schemas.analytics import (
+    IndustryDemandItem,
+    IndustryDemandResponse,
+    SalaryByRoleItem,
+    SalaryByRoleResponse,
+)
 from src.database.models import Job
 
 MIN_INTERPRETABLE_LISTINGS = 30
@@ -214,3 +220,131 @@ def _to_float(value: object) -> float:
     if isinstance(value, Decimal):
         return float(value)
     return float(value)
+
+
+def get_industry_demand(db: Session) -> IndustryDemandResponse:
+    """Return industry demand summaries grouped by niche, career, type, and site.
+
+    Args:
+        db: SQLAlchemy session.
+
+    Returns:
+        ``IndustryDemandResponse`` with one item per group combination.
+    """
+    rows = db.query(
+        Job.title,
+        Job.salary_min,
+        Job.salary_max,
+        Job.industry_niche,
+        Job.career,
+        Job.job_type,
+        Job.site,
+        Job.date_scraped,
+        Job.date_posted,
+    ).all()
+    return summarize_industry_demand(rows)
+
+
+def summarize_industry_demand(
+    rows: Iterable[object],
+) -> IndustryDemandResponse:
+    """Aggregate industry demand statistics from job-like rows.
+
+    Args:
+        rows: Iterable with ``title``, ``salary_min``, ``salary_max``,
+            ``industry_niche``, ``career``, ``job_type``, ``site``,
+            ``date_scraped``, and ``date_posted`` attributes.
+
+    Returns:
+        ``IndustryDemandResponse`` sorted by listings descending and group columns.
+    """
+    groups: dict[tuple[str, str, str, str], dict[str, object]] = {}
+
+    for row in rows:
+        key = (
+            row.industry_niche or "Unknown",
+            row.career or "Unknown",
+            row.job_type or "Unknown",
+            row.site or "Unknown",
+        )
+        if key not in groups:
+            groups[key] = {
+                "industry_niche": key[0],
+                "career": key[1],
+                "job_type": key[2],
+                "site": key[3],
+                "listings": 0,
+                "salary_visible_rows": 0,
+                "valid_salary_rows": 0,
+                "midpoints": [],
+                "dates_scraped": [],
+                "dates_posted": [],
+            }
+
+        bucket = groups[key]
+        bucket["listings"] += 1
+        midpoint = _salary_midpoint(row.salary_min, row.salary_max)
+        if row.salary_min is not None or row.salary_max is not None:
+            bucket["salary_visible_rows"] += 1
+        if midpoint is not None:
+            bucket["valid_salary_rows"] += 1
+            bucket["midpoints"].append(midpoint)
+        if row.date_scraped is not None:
+            bucket["dates_scraped"].append(_to_iso(row.date_scraped))
+        if row.date_posted is not None:
+            bucket["dates_posted"].append(str(row.date_posted))
+
+    items = [_build_industry_item(bucket) for bucket in groups.values()]
+    items.sort(
+        key=lambda item: (
+            -item.listings,
+            item.industry_niche or "",
+            item.career or "",
+            item.job_type or "",
+            item.site or "",
+        ),
+    )
+
+    return IndustryDemandResponse(
+        items=items,
+        total_listings=sum(item.listings for item in items),
+        total_salary_visible_rows=sum(item.salary_visible_rows for item in items),
+        total_valid_salary_rows=sum(item.valid_salary_rows for item in items),
+        total_groups=len(items),
+    )
+
+
+def _build_industry_item(bucket: dict[str, object]) -> IndustryDemandItem:
+    """Convert mutable aggregate storage into an API schema."""
+    listings = int(bucket["listings"])
+    valid_salary_rows = int(bucket["valid_salary_rows"])
+    salary_visible_rows = int(bucket["salary_visible_rows"])
+    midpoints = bucket["midpoints"]
+    dates_scraped = bucket["dates_scraped"]
+    dates_posted = bucket["dates_posted"]
+    salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
+
+    return IndustryDemandItem(
+        industry_niche=str(bucket["industry_niche"]),
+        career=str(bucket["career"]),
+        job_type=str(bucket["job_type"]),
+        site=str(bucket["site"]),
+        listings=listings,
+        salary_visible_rows=salary_visible_rows,
+        valid_salary_rows=valid_salary_rows,
+        median_salary_midpoint=median(midpoints) if midpoints else None,
+        salary_visibility_rate=salary_visibility_rate,
+        first_date_scraped=min(dates_scraped) if dates_scraped else None,
+        last_date_scraped=max(dates_scraped) if dates_scraped else None,
+        first_date_posted=min(dates_posted) if dates_posted else None,
+        last_date_posted=max(dates_posted) if dates_posted else None,
+        interpretation_ready=(
+            listings >= MIN_INTERPRETABLE_LISTINGS
+            and valid_salary_rows >= MIN_INTERPRETABLE_VALID_SALARIES
+        ),
+    )
+
+
+def _to_iso(dt: datetime) -> str:
+    """Convert a datetime to an ISO 8601 string."""
+    return dt.isoformat()

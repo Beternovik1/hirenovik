@@ -1,10 +1,12 @@
 """Tests for analytics router and service behavior."""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from src.api.services.analytics_service import (
     ROLE_BUCKETS,
     classify_role_family,
+    summarize_industry_demand,
     summarize_salary_by_role,
 )
 
@@ -77,3 +79,112 @@ def test_summarize_salary_by_role_invalid_pairs_are_excluded():
     assert backend.min_salary_midpoint == 15000
     assert backend.max_salary_midpoint == 15000
     assert backend.salary_visibility_rate == 0.8
+
+
+def test_industry_demand_returns_expected_shape(client, mock_db_session):
+    """GET /analytics/industry-demand returns groups and counts."""
+    response = client.get("/analytics/industry-demand")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data) == {
+        "items",
+        "total_listings",
+        "total_salary_visible_rows",
+        "total_valid_salary_rows",
+        "total_groups",
+    }
+    assert data["total_listings"] == 3
+    assert data["total_salary_visible_rows"] == 2
+    assert data["total_valid_salary_rows"] == 2
+    assert data["total_groups"] == 3
+    assert len(data["items"]) == 3
+    assert set(data["items"][0]) == {
+        "industry_niche",
+        "career",
+        "job_type",
+        "site",
+        "listings",
+        "salary_visible_rows",
+        "valid_salary_rows",
+        "median_salary_midpoint",
+        "salary_visibility_rate",
+        "first_date_scraped",
+        "last_date_scraped",
+        "first_date_posted",
+        "last_date_posted",
+        "interpretation_ready",
+    }
+
+
+def test_summarize_industry_demand_valid_salary_filtering():
+    """Invalid salary pairs count as visible but not valid salary rows."""
+    t0 = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(
+            title="engineer",
+            salary_min=10000,
+            salary_max=20000,
+            industry_niche="Tech",
+            career="Engineer",
+            job_type="remoto",
+            site="indeed",
+            date_scraped=t0,
+            date_posted=None,
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=30000,
+            salary_max=20000,
+            industry_niche="Tech",
+            career="Engineer",
+            job_type="remoto",
+            site="indeed",
+            date_scraped=t0,
+            date_posted=None,
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=0,
+            salary_max=10000,
+            industry_niche="Tech",
+            career="Engineer",
+            job_type="remoto",
+            site="indeed",
+            date_scraped=t0,
+            date_posted=None,
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=None,
+            salary_max=25000,
+            industry_niche="Tech",
+            career="Engineer",
+            job_type="remoto",
+            site="indeed",
+            date_scraped=t0,
+            date_posted=None,
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=None,
+            salary_max=None,
+            industry_niche="Tech",
+            career="Engineer",
+            job_type="remoto",
+            site="indeed",
+            date_scraped=t0,
+            date_posted=None,
+        ),
+    ]
+
+    response = summarize_industry_demand(rows)
+
+    assert len(response.items) == 1
+    group = response.items[0]
+    assert group.listings == 5
+    assert group.salary_visible_rows == 4
+    assert group.valid_salary_rows == 1
+    assert group.median_salary_midpoint == 15000
+    assert group.salary_visibility_rate == 0.8
+    assert response.total_groups == 1

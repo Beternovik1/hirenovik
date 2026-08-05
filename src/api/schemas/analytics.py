@@ -24,3 +24,32 @@ class SalaryByRoleResponse(BaseModel):
     total_listings: int
     total_salary_visible_rows: int
     total_valid_salary_rows: int
+
+
+class IndustryDemandItem(BaseModel):
+    """Salary demand summary for one industry-niche/career/job-type/site group."""
+
+    industry_niche: str | None = None
+    career: str | None = None
+    job_type: str | None = None
+    site: str | None = None
+    listings: int
+    salary_visible_rows: int
+    valid_salary_rows: int
+    median_salary_midpoint: float | None = None
+    salary_visibility_rate: float
+    first_date_scraped: str | None = None
+    last_date_scraped: str | None = None
+    first_date_posted: str | None = None
+    last_date_posted: str | None = None
+    interpretation_ready: bool
+
+
+class IndustryDemandResponse(BaseModel):
+    """Industry demand summary with dataset-level totals."""
+
+    items: list[IndustryDemandItem]
+    total_listings: int
+    total_salary_visible_rows: int
+    total_valid_salary_rows: int
+    total_groups: int
