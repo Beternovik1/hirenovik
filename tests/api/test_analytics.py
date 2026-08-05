@@ -7,11 +7,16 @@ from src.api.services.analytics_service import (
     ROLE_BUCKETS,
     _parse_keywords,
     classify_role_family,
+    summarize_geography,
     summarize_industry_demand,
     summarize_salary_by_role,
     summarize_skill_frequency,
+    summarize_time_trends,
 )
-from src.api.schemas.analytics import SkillFrequencyResponse
+from src.api.schemas.analytics import (
+    SkillFrequencyResponse,
+    TimeTrendResponse,
+)
 
 
 def test_analytics_status_returns_placeholder_message(client):
@@ -311,3 +316,287 @@ def test_parse_keywords_handles_edge_cases():
     assert _parse_keywords("not json") == []
     assert _parse_keywords('["python", "SQL", null]') == ["python", "sql"]
     assert _parse_keywords(["Python", "  aws  ", ""]) == ["python", "aws"]
+
+
+def test_geography_returns_expected_shape(client, mock_db_session):
+    """GET /analytics/geography returns groups and totals."""
+    response = client.get("/analytics/geography")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data) == {
+        "items",
+        "total_listings",
+        "total_salary_visible_rows",
+        "total_valid_salary_rows",
+        "total_locations",
+    }
+    assert data["total_listings"] == 3
+    assert data["total_salary_visible_rows"] == 2
+    assert data["total_valid_salary_rows"] == 2
+    assert data["total_locations"] == 3
+    assert len(data["items"]) == 3
+    assert set(data["items"][0]) == {
+        "country",
+        "state",
+        "raw_location",
+        "listings",
+        "salary_visible_rows",
+        "valid_salary_rows",
+        "median_salary_midpoint",
+        "min_salary_midpoint",
+        "max_salary_midpoint",
+        "salary_visibility_rate",
+        "interpretation_ready",
+    }
+
+
+def test_summarize_geography_nulls_coalesced_to_unknown():
+    """Null country, state, or raw_location must be replaced with 'Unknown'."""
+    rows = [
+        SimpleNamespace(
+            title="dev",
+            salary_min=10000,
+            salary_max=20000,
+            country=None,
+            state=None,
+            raw_location=None,
+        ),
+        SimpleNamespace(
+            title="dev",
+            salary_min=30000,
+            salary_max=50000,
+            country=None,
+            state=None,
+            raw_location=None,
+        ),
+    ]
+
+    response = summarize_geography(rows)
+
+    assert response.total_locations == 1
+    assert response.total_listings == 2
+    group = response.items[0]
+    assert group.country == "Unknown"
+    assert group.state == "Unknown"
+    assert group.raw_location == "Unknown"
+
+
+def test_summarize_geography_salary_filtering():
+    """Invalid salary pairs count as visible but not valid salary rows."""
+    rows = [
+        SimpleNamespace(
+            title="engineer",
+            salary_min=10000,
+            salary_max=20000,
+            country="Mexico",
+            state="CDMX",
+            raw_location="CDMX",
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=30000,
+            salary_max=20000,
+            country="Mexico",
+            state="CDMX",
+            raw_location="CDMX",
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=0,
+            salary_max=10000,
+            country="Mexico",
+            state="CDMX",
+            raw_location="CDMX",
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=None,
+            salary_max=25000,
+            country="Mexico",
+            state="CDMX",
+            raw_location="CDMX",
+        ),
+        SimpleNamespace(
+            title="engineer",
+            salary_min=None,
+            salary_max=None,
+            country="Mexico",
+            state="CDMX",
+            raw_location="CDMX",
+        ),
+    ]
+
+    response = summarize_geography(rows)
+
+    assert len(response.items) == 1
+    group = response.items[0]
+    assert group.listings == 5
+    assert group.salary_visible_rows == 4
+    assert group.valid_salary_rows == 1
+    assert group.median_salary_midpoint == 15000
+    assert group.min_salary_midpoint == 15000
+    assert group.max_salary_midpoint == 15000
+    assert group.salary_visibility_rate == 0.8
+
+
+def test_time_trends_returns_expected_shape(client, mock_db_session):
+    """GET /analytics/time-trends returns period groups and totals."""
+    response = client.get("/analytics/time-trends")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert set(data) == {
+        "items",
+        "total_listings",
+        "total_salary_visible_rows",
+        "total_valid_salary_rows",
+        "period_count",
+    }
+    assert data["total_listings"] == 3
+    assert data["total_salary_visible_rows"] == 2
+    assert data["total_valid_salary_rows"] == 2
+    assert data["period_count"] == 1
+    assert len(data["items"]) == 1
+    assert set(data["items"][0]) == {
+        "period_start",
+        "listings",
+        "salary_visible_rows",
+        "valid_salary_rows",
+        "median_salary_midpoint",
+        "date_posted_listings",
+    }
+
+
+def test_time_trends_default_granularity_is_week(client, mock_db_session):
+    """Default granularity parameter is 'week' and returns valid period."""
+    response = client.get("/analytics/time-trends")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) >= 1
+    period_start = data["items"][0]["period_start"]
+    assert "-" in period_start
+
+
+def test_time_trends_month_granularity(client, mock_db_session):
+    """Month granularity returns monthly period_start."""
+    response = client.get("/analytics/time-trends?granularity=month")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) >= 1
+    period_start = data["items"][0]["period_start"]
+    assert "-" in period_start
+
+
+def test_time_trends_invalid_granularity_returns_422(client, mock_db_session):
+    """Invalid granularity query param returns 422."""
+    response = client.get("/analytics/time-trends?granularity=day")
+
+    assert response.status_code == 422
+
+
+def test_summarize_time_trends_week_grouping():
+    """Week granularity groups rows by ISO week and computes correct stats."""
+    t1 = datetime(2026, 3, 9, tzinfo=timezone.utc)
+    t2 = datetime(2026, 3, 11, tzinfo=timezone.utc)
+    t3 = datetime(2026, 3, 16, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(
+            title="dev", salary_min=10000, salary_max=20000,
+            date_scraped=t1, date_posted="2026-03-05",
+        ),
+        SimpleNamespace(
+            title="dev", salary_min=15000, salary_max=25000,
+            date_scraped=t2, date_posted="2026-03-06",
+        ),
+        SimpleNamespace(
+            title="dev", salary_min=None, salary_max=None,
+            date_scraped=t3, date_posted=None,
+        ),
+    ]
+
+    result = summarize_time_trends(rows, "week")
+
+    assert isinstance(result, TimeTrendResponse)
+    assert result.period_count == 2
+    assert result.total_listings == 3
+    assert result.total_salary_visible_rows == 2
+    assert result.total_valid_salary_rows == 2
+
+    week1 = result.items[0]
+    assert week1.listings == 2
+    assert week1.valid_salary_rows == 2
+    assert week1.median_salary_midpoint == 17500.0
+    assert week1.date_posted_listings == 2
+
+    week2 = result.items[1]
+    assert week2.listings == 1
+    assert week2.salary_visible_rows == 0
+    assert week2.valid_salary_rows == 0
+    assert week2.median_salary_midpoint is None
+    assert week2.date_posted_listings is None
+
+
+def test_summarize_time_trends_month_grouping():
+    """Month granularity groups rows by year-month and computes correct stats."""
+    t1 = datetime(2026, 3, 9, tzinfo=timezone.utc)
+    t2 = datetime(2026, 3, 31, tzinfo=timezone.utc)
+    t3 = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(
+            title="dev", salary_min=10000, salary_max=20000,
+            date_scraped=t1, date_posted="2026-03-05",
+        ),
+        SimpleNamespace(
+            title="dev", salary_min=None, salary_max=None,
+            date_scraped=t2, date_posted=None,
+        ),
+        SimpleNamespace(
+            title="dev", salary_min=50000, salary_max=50000,
+            date_scraped=t3, date_posted="2026-04-01",
+        ),
+    ]
+
+    result = summarize_time_trends(rows, "month")
+
+    assert isinstance(result, TimeTrendResponse)
+    assert result.period_count == 2
+    assert result.total_listings == 3
+
+    month1 = result.items[0]
+    assert month1.period_start == "2026-03-01"
+    assert month1.listings == 2
+    assert month1.salary_visible_rows == 1
+    assert month1.valid_salary_rows == 1
+    assert month1.median_salary_midpoint == 15000.0
+    assert month1.date_posted_listings == 1
+
+    month2 = result.items[1]
+    assert month2.period_start == "2026-04-01"
+    assert month2.listings == 1
+    assert month2.valid_salary_rows == 1
+    assert month2.median_salary_midpoint == 50000.0
+    assert month2.date_posted_listings == 1
+
+
+def test_summarize_time_trends_skips_null_date_scraped():
+    """Rows with null date_scraped are excluded from time trends."""
+    t1 = datetime(2026, 3, 9, tzinfo=timezone.utc)
+    rows = [
+        SimpleNamespace(
+            title="dev", salary_min=10000, salary_max=20000,
+            date_scraped=t1, date_posted=None,
+        ),
+        SimpleNamespace(
+            title="dev", salary_min=50000, salary_max=70000,
+            date_scraped=None, date_posted="2026-03-01",
+        ),
+    ]
+
+    result = summarize_time_trends(rows, "month")
+
+    assert result.total_listings == 1
+    assert result.period_count == 1
+    assert result.items[0].listings == 1

@@ -1,13 +1,17 @@
 """Router for DB-only analytics endpoints."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from src.api.database import get_db
 from src.api.schemas.analytics import (
+    GeographyResponse,
     IndustryDemandResponse,
     SalaryByRoleResponse,
     SkillFrequencyResponse,
+    TimeTrendResponse,
 )
 from src.api.services import analytics_service
 
@@ -32,6 +36,24 @@ def get_industry_demand(
 ) -> IndustryDemandResponse:
     """Return industry demand summaries grouped by niche, career, type, and site."""
     return analytics_service.get_industry_demand(db)
+
+
+@router.get("/geography", response_model=GeographyResponse)
+def get_geography(db: Session = Depends(get_db)) -> GeographyResponse:
+    """Return geography summaries grouped by country, state, and raw_location."""
+    return analytics_service.get_geography(db)
+
+
+@router.get("/time-trends", response_model=TimeTrendResponse)
+def get_time_trends(
+    granularity: Literal["week", "month"] = Query(
+        default="week",
+        description="Time grouping granularity: 'week' or 'month'",
+    ),
+    db: Session = Depends(get_db),
+) -> TimeTrendResponse:
+    """Return job postings time-series trends grouped by week or month."""
+    return analytics_service.get_time_trends(db, granularity)
 
 
 @router.get("/skill-frequency", response_model=SkillFrequencyResponse)

@@ -3,19 +3,23 @@
 import json
 import re
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from statistics import median
 
 from sqlalchemy.orm import Session
 
 from src.api.schemas.analytics import (
+    GeographyItem,
+    GeographyResponse,
     IndustryDemandItem,
     IndustryDemandResponse,
     SalaryByRoleItem,
     SalaryByRoleResponse,
     SkillFrequencyItem,
     SkillFrequencyResponse,
+    TimeTrendItem,
+    TimeTrendResponse,
 )
 from src.database.models import Job
 
@@ -353,6 +357,110 @@ def _to_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+def get_geography(db: Session) -> GeographyResponse:
+    """Return geography summaries grouped by country, state, and raw_location.
+
+    Args:
+        db: SQLAlchemy session.
+
+    Returns:
+        ``GeographyResponse`` with one item for each location group.
+    """
+    rows = db.query(
+        Job.title,
+        Job.salary_min,
+        Job.salary_max,
+        Job.country,
+        Job.state,
+        Job.raw_location,
+    ).all()
+    return summarize_geography(rows)
+
+
+def summarize_geography(rows: Iterable[object]) -> GeographyResponse:
+    """Aggregate geography statistics from job-like rows.
+
+    Args:
+        rows: Iterable with ``title``, ``salary_min``, ``salary_max``,
+            ``country``, ``state``, and ``raw_location`` attributes.
+
+    Returns:
+        ``GeographyResponse`` sorted by listings descending, then country,
+        state, and raw_location ascending.
+    """
+    groups: dict[tuple[str, str, str], dict[str, object]] = {}
+
+    for row in rows:
+        key = (
+            row.country or "Unknown",
+            row.state or "Unknown",
+            row.raw_location or "Unknown",
+        )
+        if key not in groups:
+            groups[key] = {
+                "country": key[0],
+                "state": key[1],
+                "raw_location": key[2],
+                "listings": 0,
+                "salary_visible_rows": 0,
+                "valid_salary_rows": 0,
+                "midpoints": [],
+            }
+
+        bucket = groups[key]
+        bucket["listings"] += 1
+        midpoint = _salary_midpoint(row.salary_min, row.salary_max)
+        if row.salary_min is not None or row.salary_max is not None:
+            bucket["salary_visible_rows"] += 1
+        if midpoint is not None:
+            bucket["valid_salary_rows"] += 1
+            bucket["midpoints"].append(midpoint)
+
+    items = [_build_geography_item(bucket) for bucket in groups.values()]
+    items.sort(
+        key=lambda item: (
+            -item.listings,
+            item.country or "",
+            item.state or "",
+            item.raw_location or "",
+        ),
+    )
+
+    return GeographyResponse(
+        items=items,
+        total_listings=sum(item.listings for item in items),
+        total_salary_visible_rows=sum(item.salary_visible_rows for item in items),
+        total_valid_salary_rows=sum(item.valid_salary_rows for item in items),
+        total_locations=len(items),
+    )
+
+
+def _build_geography_item(bucket: dict[str, object]) -> GeographyItem:
+    """Convert mutable aggregate storage into an API schema."""
+    listings = int(bucket["listings"])
+    valid_salary_rows = int(bucket["valid_salary_rows"])
+    salary_visible_rows = int(bucket["salary_visible_rows"])
+    midpoints = bucket["midpoints"]
+    salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
+
+    return GeographyItem(
+        country=str(bucket["country"]),
+        state=str(bucket["state"]),
+        raw_location=str(bucket["raw_location"]),
+        listings=listings,
+        salary_visible_rows=salary_visible_rows,
+        valid_salary_rows=valid_salary_rows,
+        median_salary_midpoint=median(midpoints) if midpoints else None,
+        min_salary_midpoint=min(midpoints) if midpoints else None,
+        max_salary_midpoint=max(midpoints) if midpoints else None,
+        salary_visibility_rate=salary_visibility_rate,
+        interpretation_ready=(
+            listings >= MIN_INTERPRETABLE_LISTINGS
+            and valid_salary_rows >= MIN_INTERPRETABLE_VALID_SALARIES
+        ),
+    )
+
+
 def get_skill_frequency(db: Session, limit: int = 50) -> SkillFrequencyResponse:
     """Return global keyword frequency from the keywords_json column.
 
@@ -413,6 +521,116 @@ def summarize_skill_frequency(
         items=items,
         total_unique_keywords=len(keyword_to_job_ids),
         total_listings_with_keywords=total_listings_with_keywords,
+    )
+
+
+def get_time_trends(db: Session, granularity: str) -> TimeTrendResponse:
+    """Return time-series trends grouped by week or month.
+
+    Args:
+        db: SQLAlchemy session.
+        granularity: Grouping granularity, either ``"week"`` or ``"month"``.
+
+    Returns:
+        ``TimeTrendResponse`` with one item per period sorted
+        chronologically.
+    """
+    rows = db.query(
+        Job.title,
+        Job.salary_min,
+        Job.salary_max,
+        Job.date_scraped,
+        Job.date_posted,
+    ).all()
+    return summarize_time_trends(rows, granularity)
+
+
+def summarize_time_trends(
+    rows: Iterable[object],
+    granularity: str,
+) -> TimeTrendResponse:
+    """Aggregate time-series statistics from job-like rows.
+
+    Args:
+        rows: Iterable with ``title``, ``salary_min``, ``salary_max``,
+            ``date_scraped``, and ``date_posted`` attributes.
+        granularity: Grouping granularity, either ``"week"`` or ``"month"``.
+
+    Returns:
+        ``TimeTrendResponse`` sorted by ``period_start`` ascending.
+    """
+    periods: dict[tuple, dict[str, object]] = {}
+
+    for row in rows:
+        if row.date_scraped is None:
+            continue
+
+        key = _period_key(row.date_scraped, granularity)
+        if key not in periods:
+            periods[key] = {
+                "period_start": _period_start(key, granularity),
+                "listings": 0,
+                "salary_visible_rows": 0,
+                "valid_salary_rows": 0,
+                "midpoints": [],
+                "date_posted_count": 0,
+            }
+
+        bucket = periods[key]
+        bucket["listings"] += 1
+        midpoint = _salary_midpoint(row.salary_min, row.salary_max)
+        if row.salary_min is not None or row.salary_max is not None:
+            bucket["salary_visible_rows"] += 1
+        if midpoint is not None:
+            bucket["valid_salary_rows"] += 1
+            bucket["midpoints"].append(midpoint)
+        if row.date_posted is not None:
+            bucket["date_posted_count"] += 1
+
+    items = sorted(
+        [_build_time_trend_item(bucket) for bucket in periods.values()],
+        key=lambda item: item.period_start,
+    )
+
+    return TimeTrendResponse(
+        items=items,
+        total_listings=sum(item.listings for item in items),
+        total_salary_visible_rows=sum(item.salary_visible_rows for item in items),
+        total_valid_salary_rows=sum(item.valid_salary_rows for item in items),
+        period_count=len(items),
+    )
+
+
+def _period_key(dt: datetime, granularity: str) -> tuple:
+    """Return a sortable grouping key for the given datetime and granularity."""
+    if granularity == "week":
+        iso = dt.isocalendar()
+        return (iso[0], iso[1])
+    return (dt.year, dt.month)
+
+
+def _period_start(key: tuple, granularity: str) -> str:
+    """Return the ISO 8601 date string for the first day of a period."""
+    if granularity == "week":
+        return datetime.fromisocalendar(key[0], key[1], 1).date().isoformat()
+    return date(key[0], key[1], 1).isoformat()
+
+
+def _build_time_trend_item(bucket: dict[str, object]) -> TimeTrendItem:
+    """Convert mutable aggregate storage into an API schema."""
+    listings = int(bucket["listings"])
+    valid_salary_rows = int(bucket["valid_salary_rows"])
+    salary_visible_rows = int(bucket["salary_visible_rows"])
+    midpoints = bucket["midpoints"]
+    date_posted_count = int(bucket["date_posted_count"])
+
+    return TimeTrendItem(
+        period_start=str(bucket["period_start"]),
+        listings=listings,
+        salary_visible_rows=salary_visible_rows,
+        valid_salary_rows=valid_salary_rows,
+        median_salary_midpoint=median(midpoints) if midpoints else None,
+        date_posted_listings=date_posted_count if date_posted_count else None,
     )
 
 

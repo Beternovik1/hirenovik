@@ -55,6 +55,32 @@ class IndustryDemandResponse(BaseModel):
     total_groups: int
 
 
+class GeographyItem(BaseModel):
+    """Salary summary for one (country, state, raw_location) group."""
+
+    country: str | None = None
+    state: str | None = None
+    raw_location: str | None = None
+    listings: int
+    salary_visible_rows: int
+    valid_salary_rows: int
+    median_salary_midpoint: float | None = None
+    min_salary_midpoint: float | None = None
+    max_salary_midpoint: float | None = None
+    salary_visibility_rate: float
+    interpretation_ready: bool
+
+
+class GeographyResponse(BaseModel):
+    """Geography salary summary with dataset-level totals."""
+
+    items: list[GeographyItem]
+    total_listings: int
+    total_salary_visible_rows: int
+    total_valid_salary_rows: int
+    total_locations: int
+
+
 class SkillFrequencyItem(BaseModel):
     """Keyword frequency for one skill extracted from keywords_json."""
 
@@ -68,3 +94,24 @@ class SkillFrequencyResponse(BaseModel):
     items: list[SkillFrequencyItem]
     total_unique_keywords: int
     total_listings_with_keywords: int
+
+
+class TimeTrendItem(BaseModel):
+    """Time-series data point for one grouping period."""
+
+    period_start: str
+    listings: int
+    salary_visible_rows: int
+    valid_salary_rows: int
+    median_salary_midpoint: float | None = None
+    date_posted_listings: int | None = None
+
+
+class TimeTrendResponse(BaseModel):
+    """Time-series trends with dataset-level metadata."""
+
+    items: list[TimeTrendItem]
+    total_listings: int
+    total_salary_visible_rows: int
+    total_valid_salary_rows: int
+    period_count: int
