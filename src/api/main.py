@@ -133,7 +133,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    from src.api.routers import jobs, topics, trends, skills, search, predict
+    app.state.settings = settings
+
+    from src.api.routers import analytics, jobs, topics, trends, skills, search, predict
 
     app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
     app.include_router(topics.router, prefix="/topics", tags=["topics"])
@@ -141,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(skills.router, prefix="/skills", tags=["skills"])
     app.include_router(search.router, prefix="/search", tags=["search"])
     app.include_router(predict.router, prefix="/predict", tags=["predict"])
+    app.include_router(analytics.router)
 
     @app.get("/", tags=["health"])
     def health_check() -> dict:  # type: ignore[no-untyped-def]
