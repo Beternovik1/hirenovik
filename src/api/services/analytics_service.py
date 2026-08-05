@@ -1,0 +1,216 @@
+"""Service layer for DB-only analytics endpoints."""
+
+import re
+from collections.abc import Iterable
+from decimal import Decimal
+from statistics import median
+
+from sqlalchemy.orm import Session
+
+from src.api.schemas.analytics import SalaryByRoleItem, SalaryByRoleResponse
+from src.database.models import Job
+
+MIN_INTERPRETABLE_LISTINGS = 30
+MIN_INTERPRETABLE_VALID_SALARIES = 10
+
+ROLE_BUCKET_RULES: list[tuple[str, re.Pattern[str]]] = [
+    (
+        "data analyst",
+        re.compile(
+            r"\b(data analyst|analista de datos|business intelligence|bi analyst|"
+            r"power bi|analytics specialist|analytics consultant|"
+            r"analista de base de datos)\b"
+        ),
+    ),
+    (
+        "data engineer",
+        re.compile(
+            r"\b(data engineer|ingeniero de datos|etl|data pipeline|big data|"
+            r"analytics engineer|arquitecto de datos|data architect|database admin|"
+            r"dba|administrador de base)\b"
+        ),
+    ),
+    (
+        "data science/ml",
+        re.compile(
+            r"\b(data scien|machine learning|ml engineer|ai engineer|deep learning|"
+            r"nlp engineer)\b"
+        ),
+    ),
+    (
+        "software engineer",
+        re.compile(
+            r"\b(software engineer|software developer|ingeniero de software|"
+            r"programador\b)\b"
+        ),
+    ),
+    (
+        "backend",
+        re.compile(
+            r"\b(backend|back end|api developer|java developer|python developer|"
+            r"node developer|desarrollador python|desarrollador net|"
+            r"desarrollador java|desarrollador node|net developer)\b"
+        ),
+    ),
+    (
+        "frontend",
+        re.compile(
+            r"\b(frontend|front end|react|angular|vue|ui developer|"
+            r"desarrollador front|ux engineer)\b"
+        ),
+    ),
+    (
+        "fullstack",
+        re.compile(
+            r"\b(fullstack|full stack|desarrollador full|desarrollador web|"
+            r"web developer)\b"
+        ),
+    ),
+    (
+        "devops/cloud",
+        re.compile(
+            r"\b(devops|sre|site reliability|cloud|aws|azure|kubernetes|docker|"
+            r"infrastructure engineer|platform engineer|architect\b|arquitecto\b)\b"
+        ),
+    ),
+    (
+        "qa/testing",
+        re.compile(
+            r"\b(qa|tester|testing|test automation|quality assurance|qa engineer|"
+            r"test engineer|ingeniero de pruebas)\b"
+        ),
+    ),
+    (
+        "security",
+        re.compile(
+            r"\b(security engineer|cyber security|cybersecurity|pentest|infosec|"
+            r"security analyst)\b"
+        ),
+    ),
+    (
+        "industrial/maintenance",
+        re.compile(
+            r"\b(maintenance|mantenimiento|industrial|manufactur|production|plc|"
+            r"calidad|quality|ingeniero electrico|ingeniero mec|"
+            r"ingeniero industrial)\b"
+        ),
+    ),
+]
+
+ROLE_BUCKETS = [bucket for bucket, _ in ROLE_BUCKET_RULES] + ["other"]
+
+
+def get_salary_by_role(db: Session) -> SalaryByRoleResponse:
+    """Return role-family salary summaries derived only from the jobs table.
+
+    Args:
+        db: SQLAlchemy session.
+
+    Returns:
+        ``SalaryByRoleResponse`` with one item for each role-family bucket.
+    """
+    rows = db.query(Job.title, Job.salary_min, Job.salary_max).all()
+    return summarize_salary_by_role(rows)
+
+
+def summarize_salary_by_role(rows: Iterable[object]) -> SalaryByRoleResponse:
+    """Aggregate role-family salary statistics from job-like rows.
+
+    Args:
+        rows: Iterable with ``title``, ``salary_min``, and ``salary_max`` attributes.
+
+    Returns:
+        ``SalaryByRoleResponse`` sorted by listings descending and role-family.
+    """
+    buckets = {bucket: _empty_bucket(bucket) for bucket in ROLE_BUCKETS}
+
+    for row in rows:
+        role_family = classify_role_family(row.title)
+        bucket = buckets[role_family]
+        bucket["listings"] += 1
+        midpoint = _salary_midpoint(row.salary_min, row.salary_max)
+        if row.salary_min is not None or row.salary_max is not None:
+            bucket["salary_visible_rows"] += 1
+        if midpoint is not None:
+            bucket["valid_salary_rows"] += 1
+            bucket["midpoints"].append(midpoint)
+
+    items = [_build_item(bucket) for bucket in buckets.values()]
+    items.sort(key=lambda item: (-item.listings, item.role_family))
+
+    return SalaryByRoleResponse(
+        items=items,
+        total_listings=sum(item.listings for item in items),
+        total_salary_visible_rows=sum(item.salary_visible_rows for item in items),
+        total_valid_salary_rows=sum(item.valid_salary_rows for item in items),
+    )
+
+
+def normalize_title(title: object) -> str:
+    """Normalize a title using the Notebook 3 deterministic text cleanup."""
+    text = "" if title is None else str(title).casefold()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def classify_role_family(title: object) -> str:
+    """Classify a job title into the first matching role-family bucket."""
+    title_norm = normalize_title(title)
+    for bucket, pattern in ROLE_BUCKET_RULES:
+        if pattern.search(title_norm):
+            return bucket
+    return "other"
+
+
+def _empty_bucket(role_family: str) -> dict[str, object]:
+    """Create mutable aggregate storage for one role-family bucket."""
+    return {
+        "role_family": role_family,
+        "listings": 0,
+        "salary_visible_rows": 0,
+        "valid_salary_rows": 0,
+        "midpoints": [],
+    }
+
+
+def _build_item(bucket: dict[str, object]) -> SalaryByRoleItem:
+    """Convert mutable aggregate storage into an API schema."""
+    listings = int(bucket["listings"])
+    valid_salary_rows = int(bucket["valid_salary_rows"])
+    salary_visible_rows = int(bucket["salary_visible_rows"])
+    midpoints = bucket["midpoints"]
+    salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
+
+    return SalaryByRoleItem(
+        role_family=str(bucket["role_family"]),
+        listings=listings,
+        salary_visible_rows=salary_visible_rows,
+        valid_salary_rows=valid_salary_rows,
+        median_salary_midpoint=median(midpoints) if midpoints else None,
+        min_salary_midpoint=min(midpoints) if midpoints else None,
+        max_salary_midpoint=max(midpoints) if midpoints else None,
+        salary_visibility_rate=salary_visibility_rate,
+        interpretation_ready=(
+            listings >= MIN_INTERPRETABLE_LISTINGS
+            and valid_salary_rows >= MIN_INTERPRETABLE_VALID_SALARIES
+        ),
+    )
+
+
+def _salary_midpoint(salary_min: object, salary_max: object) -> float | None:
+    """Return the midpoint for valid salary pairs, otherwise None."""
+    if salary_min is None or salary_max is None:
+        return None
+
+    minimum = _to_float(salary_min)
+    maximum = _to_float(salary_max)
+    if minimum < 1 or maximum < 1 or minimum > maximum:
+        return None
+    return (minimum + maximum) / 2
+
+
+def _to_float(value: object) -> float:
+    """Convert SQL numeric values into floats for JSON-safe summaries."""
+    if isinstance(value, Decimal):
+        return float(value)
+    return float(value)
