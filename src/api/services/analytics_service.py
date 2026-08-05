@@ -1,5 +1,6 @@
 """Service layer for DB-only analytics endpoints."""
 
+import json
 import re
 from collections.abc import Iterable
 from datetime import datetime
@@ -13,6 +14,8 @@ from src.api.schemas.analytics import (
     IndustryDemandResponse,
     SalaryByRoleItem,
     SalaryByRoleResponse,
+    SkillFrequencyItem,
+    SkillFrequencyResponse,
 )
 from src.database.models import Job
 
@@ -348,3 +351,94 @@ def _build_industry_item(bucket: dict[str, object]) -> IndustryDemandItem:
 def _to_iso(dt: datetime) -> str:
     """Convert a datetime to an ISO 8601 string."""
     return dt.isoformat()
+
+
+def get_skill_frequency(db: Session, limit: int = 50) -> SkillFrequencyResponse:
+    """Return global keyword frequency from the keywords_json column.
+
+    Args:
+        db: SQLAlchemy session.
+        limit: Maximum number of keywords to return (default 50, max 200).
+
+    Returns:
+        ``SkillFrequencyResponse`` with items sorted by count descending,
+        then keyword ascending.
+    """
+    rows = db.query(
+        Job.id,
+        Job.title,
+        Job.salary_min,
+        Job.salary_max,
+        Job.keywords_json,
+    ).all()
+    return summarize_skill_frequency(rows, limit=limit)
+
+
+def summarize_skill_frequency(
+    rows: Iterable[object],
+    limit: int = 50,
+) -> SkillFrequencyResponse:
+    """Aggregate global keyword frequency from job-like rows.
+
+    Args:
+        rows: Iterable with ``id``, ``title``, ``salary_min``,
+            ``salary_max``, and ``keywords_json`` attributes.
+        limit: Maximum number of keywords to include in the response.
+
+    Returns:
+        ``SkillFrequencyResponse`` sorted by count descending, keyword
+        ascending, limited to ``limit`` items.
+    """
+    keyword_to_job_ids: dict[str, set[int]] = {}
+    total_listings_with_keywords = 0
+
+    for row in rows:
+        keywords = _parse_keywords(row.keywords_json)
+        if not keywords:
+            continue
+        total_listings_with_keywords += 1
+        for kw in keywords:
+            if kw not in keyword_to_job_ids:
+                keyword_to_job_ids[kw] = set()
+            keyword_to_job_ids[kw].add(row.id)
+
+    items = [
+        SkillFrequencyItem(keyword=kw, rows=len(job_ids))
+        for kw, job_ids in keyword_to_job_ids.items()
+    ]
+    items.sort(key=lambda item: (-item.rows, item.keyword))
+    items = items[:limit]
+
+    return SkillFrequencyResponse(
+        items=items,
+        total_unique_keywords=len(keyword_to_job_ids),
+        total_listings_with_keywords=total_listings_with_keywords,
+    )
+
+
+def _parse_keywords(keywords_json: object) -> list[str]:
+    """Safely parse keywords_json into a normalized list of strings.
+
+    Handles None, already-parsed lists, JSON strings, and empty values.
+    Empty or invalid input returns an empty list.
+    """
+    if keywords_json is None:
+        return []
+    if isinstance(keywords_json, list):
+        return [
+            str(kw).strip().casefold()
+            for kw in keywords_json
+            if kw is not None and str(kw).strip()
+        ]
+    if isinstance(keywords_json, str):
+        try:
+            parsed = json.loads(keywords_json)
+            if isinstance(parsed, list):
+                return [
+                    str(kw).strip().casefold()
+                    for kw in parsed
+                    if kw is not None and str(kw).strip()
+                ]
+        except json.JSONDecodeError:
+            return []
+    return []

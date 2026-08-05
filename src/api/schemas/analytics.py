@@ -53,3 +53,18 @@ class IndustryDemandResponse(BaseModel):
     total_salary_visible_rows: int
     total_valid_salary_rows: int
     total_groups: int
+
+
+class SkillFrequencyItem(BaseModel):
+    """Keyword frequency for one skill extracted from keywords_json."""
+
+    keyword: str
+    rows: int
+
+
+class SkillFrequencyResponse(BaseModel):
+    """Global keyword frequency with dataset-level metadata."""
+
+    items: list[SkillFrequencyItem]
+    total_unique_keywords: int
+    total_listings_with_keywords: int
