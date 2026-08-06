@@ -94,6 +94,8 @@ class SkillFrequencyResponse(BaseModel):
     items: list[SkillFrequencyItem]
     total_unique_keywords: int
     total_listings_with_keywords: int
+    total_listings: int
+    keyword_coverage_pct: float
 
 
 class TimeTrendItem(BaseModel):

@@ -165,3 +165,7 @@ export function relativeDate(dateStr) {
 export function fetchIndustryDemand() {
   return getJSON("/analytics/industry-demand");
 }
+
+export function fetchSkillFrequency(limit = 30) {
+  return getJSON(`/analytics/skill-frequency?limit=${limit}`);
+}

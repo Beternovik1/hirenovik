@@ -501,9 +501,11 @@ def summarize_skill_frequency(
         ascending, limited to ``limit`` items.
     """
     keyword_to_job_ids: dict[str, set[int]] = {}
+    total_listings = 0
     total_listings_with_keywords = 0
 
     for row in rows:
+        total_listings += 1
         keywords = _parse_keywords(row.keywords_json)
         if not keywords:
             continue
@@ -512,6 +514,12 @@ def summarize_skill_frequency(
             if kw not in keyword_to_job_ids:
                 keyword_to_job_ids[kw] = set()
             keyword_to_job_ids[kw].add(row.id)
+
+    keyword_coverage_pct = (
+        round(total_listings_with_keywords / total_listings * 100, 1)
+        if total_listings > 0
+        else 0.0
+    )
 
     items = [
         SkillFrequencyItem(keyword=kw, rows=len(job_ids))
@@ -524,6 +532,8 @@ def summarize_skill_frequency(
         items=items,
         total_unique_keywords=len(keyword_to_job_ids),
         total_listings_with_keywords=total_listings_with_keywords,
+        total_listings=total_listings,
+        keyword_coverage_pct=keyword_coverage_pct,
     )
 
 
