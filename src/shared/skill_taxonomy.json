@@ -1,0 +1,892 @@
+{
+  "version": "1.0.0",
+  "description": "Canonical skill taxonomy for Hirenovik. Shared source of truth for Python (backend extraction) and JavaScript (frontend rendering). Each skill has a canonical key, display label, aliases for matching in job descriptions, a category, and a matching strategy. Context-ambiguous aliases use context_rule to require nearby technical words.",
+  "categories": {
+    "programming_languages": "Programming Languages",
+    "databases": "Databases",
+    "data_engineering": "Data Engineering",
+    "cloud": "Cloud",
+    "devops": "DevOps & Infrastructure",
+    "frameworks": "Frameworks & Libraries",
+    "frontend": "Frontend",
+    "ml_ai": "Machine Learning & AI",
+    "bi_analytics": "BI & Analytics",
+    "testing": "Testing & QA",
+    "enterprise_systems": "Enterprise Systems",
+    "sap_modules": "SAP Modules",
+    "industrial_manufacturing": "Industrial & Manufacturing",
+    "other_tools": "Other Tools"
+  },
+  "skills": [
+    {
+      "canonical": "python",
+      "display": "Python",
+      "aliases": ["python", "py"],
+      "category": "programming_languages",
+      "icon_slug": "python",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "javascript",
+      "display": "JavaScript",
+      "aliases": ["javascript", "java script", "js"],
+      "category": "programming_languages",
+      "icon_slug": "javascript",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "typescript",
+      "display": "TypeScript",
+      "aliases": ["typescript", "type script"],
+      "category": "programming_languages",
+      "icon_slug": "typescript",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "java",
+      "display": "Java",
+      "aliases": ["java"],
+      "category": "programming_languages",
+      "icon_slug": "java",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "csharp",
+      "display": "C#",
+      "aliases": ["c sharp", "c-sharp", "c#"],
+      "category": "programming_languages",
+      "icon_slug": "csharp",
+      "match_strategy": "symbol_aware"
+    },
+    {
+      "canonical": "c_plus_plus",
+      "display": "C++",
+      "aliases": ["c++", "c plus plus"],
+      "category": "programming_languages",
+      "icon_slug": "cplusplus",
+      "match_strategy": "symbol_aware"
+    },
+    {
+      "canonical": "c",
+      "display": "C",
+      "aliases": ["c programming", "c developer", "c language", "c/c++", "c and c++", "experience in c"],
+      "category": "programming_languages",
+      "icon_slug": "c",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "go",
+      "display": "Go",
+      "aliases": ["golang", "go programming", "go developer", "go language"],
+      "category": "programming_languages",
+      "icon_slug": "go",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "rust",
+      "display": "Rust",
+      "aliases": ["rust", "rust programming"],
+      "category": "programming_languages",
+      "icon_slug": "rust",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "scala",
+      "display": "Scala",
+      "aliases": ["scala"],
+      "category": "programming_languages",
+      "icon_slug": "scala",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "kotlin",
+      "display": "Kotlin",
+      "aliases": ["kotlin"],
+      "category": "programming_languages",
+      "icon_slug": "kotlin",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "swift",
+      "display": "Swift",
+      "aliases": ["swift"],
+      "category": "programming_languages",
+      "icon_slug": "swift",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "r",
+      "display": "R",
+      "aliases": ["r programming", "r language", "rstudio"],
+      "category": "programming_languages",
+      "icon_slug": "r",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "php",
+      "display": "PHP",
+      "aliases": ["php"],
+      "category": "programming_languages",
+      "icon_slug": "php",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "ruby",
+      "display": "Ruby",
+      "aliases": ["ruby", "ruby on rails"],
+      "category": "programming_languages",
+      "icon_slug": "ruby",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sql",
+      "display": "SQL",
+      "aliases": ["sql", "t-sql", "tsql", "pl/sql", "plsql"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "postgresql",
+      "display": "PostgreSQL",
+      "aliases": ["postgresql", "postgres", "postgre sql"],
+      "category": "databases",
+      "icon_slug": "postgresql",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "mysql",
+      "display": "MySQL",
+      "aliases": ["mysql", "my sql"],
+      "category": "databases",
+      "icon_slug": "mysql",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "mongodb",
+      "display": "MongoDB",
+      "aliases": ["mongodb", "mongo db", "mongo"],
+      "category": "databases",
+      "icon_slug": "mongodb",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "snowflake",
+      "display": "Snowflake",
+      "aliases": ["snowflake"],
+      "category": "databases",
+      "icon_slug": "snowflake",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "bigquery",
+      "display": "BigQuery",
+      "aliases": ["bigquery", "big query"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "redshift",
+      "display": "Redshift",
+      "aliases": ["redshift"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "oracle_db",
+      "display": "Oracle Database",
+      "aliases": ["oracle database", "oracle db", "oracle sql"],
+      "category": "databases",
+      "icon_slug": "oracle",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sql_server",
+      "display": "SQL Server",
+      "aliases": ["sql server", "sqlserver", "mssql", "ms sql", "microsoft sql server"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "dynamodb",
+      "display": "DynamoDB",
+      "aliases": ["dynamodb", "dynamo db"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "cassandra",
+      "display": "Cassandra",
+      "aliases": ["cassandra"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "redis",
+      "display": "Redis",
+      "aliases": ["redis"],
+      "category": "databases",
+      "icon_slug": "redis",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "elasticsearch",
+      "display": "Elasticsearch",
+      "aliases": ["elasticsearch", "elastic search", "elastic"],
+      "category": "databases",
+      "icon_slug": "elasticsearch",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "spark",
+      "display": "Apache Spark",
+      "aliases": ["apache spark", "spark", "pyspark"],
+      "category": "data_engineering",
+      "icon_slug": "apachespark",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "kafka",
+      "display": "Apache Kafka",
+      "aliases": ["apache kafka", "kafka"],
+      "category": "data_engineering",
+      "icon_slug": "apachekafka",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "airflow",
+      "display": "Apache Airflow",
+      "aliases": ["apache airflow", "airflow"],
+      "category": "data_engineering",
+      "icon_slug": "apacheairflow",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "dbt",
+      "display": "dbt",
+      "aliases": ["dbt", "data build tool"],
+      "category": "data_engineering",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "hadoop",
+      "display": "Hadoop",
+      "aliases": ["hadoop"],
+      "category": "data_engineering",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "databricks",
+      "display": "Databricks",
+      "aliases": ["databricks", "data bricks"],
+      "category": "data_engineering",
+      "icon_slug": "databricks",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "aws",
+      "display": "AWS",
+      "aliases": ["aws", "amazon web services"],
+      "category": "cloud",
+      "icon_slug": "amazonwebservices",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "azure",
+      "display": "Azure",
+      "aliases": ["azure", "microsoft azure"],
+      "category": "cloud",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "gcp",
+      "display": "Google Cloud",
+      "aliases": ["gcp", "google cloud platform", "google cloud"],
+      "category": "cloud",
+      "icon_slug": "googlecloud",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "docker",
+      "display": "Docker",
+      "aliases": ["docker"],
+      "category": "devops",
+      "icon_slug": "docker",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "kubernetes",
+      "display": "Kubernetes",
+      "aliases": ["kubernetes", "k8s"],
+      "category": "devops",
+      "icon_slug": "kubernetes",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "terraform",
+      "display": "Terraform",
+      "aliases": ["terraform"],
+      "category": "devops",
+      "icon_slug": "terraform",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "jenkins",
+      "display": "Jenkins",
+      "aliases": ["jenkins"],
+      "category": "devops",
+      "icon_slug": "jenkins",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "git",
+      "display": "Git",
+      "aliases": ["git", "github", "gitlab"],
+      "category": "devops",
+      "icon_slug": "git",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "linux",
+      "display": "Linux",
+      "aliases": ["linux", "unix"],
+      "category": "devops",
+      "icon_slug": "linux",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "mlops",
+      "display": "MLOps",
+      "aliases": ["mlops"],
+      "category": "devops",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "ci_cd",
+      "display": "CI/CD",
+      "aliases": ["ci/cd", "ci cd", "continuous integration", "continuous delivery"],
+      "category": "devops",
+      "icon_slug": null,
+      "match_strategy": "symbol_aware"
+    },
+    {
+      "canonical": "ansible",
+      "display": "Ansible",
+      "aliases": ["ansible"],
+      "category": "devops",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "prometheus",
+      "display": "Prometheus",
+      "aliases": ["prometheus"],
+      "category": "devops",
+      "icon_slug": "prometheus",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "grafana",
+      "display": "Grafana",
+      "aliases": ["grafana"],
+      "category": "devops",
+      "icon_slug": "grafana",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "nodejs",
+      "display": "Node.js",
+      "aliases": ["node.js", "nodejs", "node js"],
+      "category": "frameworks",
+      "icon_slug": "nodedotjs",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "react",
+      "display": "React",
+      "aliases": ["react.js", "reactjs", "react developer", "react framework"],
+      "category": "frameworks",
+      "icon_slug": "react",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "nextjs",
+      "display": "Next.js",
+      "aliases": ["next.js", "nextjs", "next js"],
+      "category": "frameworks",
+      "icon_slug": "nextdotjs",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "angular",
+      "display": "Angular",
+      "aliases": ["angular", "angular.js", "angularjs"],
+      "category": "frameworks",
+      "icon_slug": "angular",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "vue",
+      "display": "Vue.js",
+      "aliases": ["vue.js", "vuejs", "vue"],
+      "category": "frameworks",
+      "icon_slug": "vuedotjs",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "django",
+      "display": "Django",
+      "aliases": ["django"],
+      "category": "frameworks",
+      "icon_slug": "django",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "flask",
+      "display": "Flask",
+      "aliases": ["flask"],
+      "category": "frameworks",
+      "icon_slug": "flask",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "fastapi",
+      "display": "FastAPI",
+      "aliases": ["fastapi", "fast api"],
+      "category": "frameworks",
+      "icon_slug": "fastapi",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "dotnet",
+      "display": ".NET",
+      "aliases": [".net", ".net framework", "dotnet core", "dotnet"],
+      "category": "frameworks",
+      "icon_slug": null,
+      "match_strategy": "symbol_aware"
+    },
+    {
+      "canonical": "spring",
+      "display": "Spring Boot",
+      "aliases": ["spring boot", "springboot", "spring framework", "spring"],
+      "category": "frameworks",
+      "icon_slug": "spring",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "express",
+      "display": "Express",
+      "aliases": ["express.js", "expressjs", "express js"],
+      "category": "frameworks",
+      "icon_slug": "express",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "laravel",
+      "display": "Laravel",
+      "aliases": ["laravel"],
+      "category": "frameworks",
+      "icon_slug": "laravel",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "tensorflow",
+      "display": "TensorFlow",
+      "aliases": ["tensorflow", "tensor flow"],
+      "category": "ml_ai",
+      "icon_slug": "tensorflow",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "pytorch",
+      "display": "PyTorch",
+      "aliases": ["pytorch", "torch"],
+      "category": "ml_ai",
+      "icon_slug": "pytorch",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "scikit_learn",
+      "display": "scikit-learn",
+      "aliases": ["scikit-learn", "scikit learn", "sklearn", "scikit"],
+      "category": "ml_ai",
+      "icon_slug": "scikitlearn",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "pandas",
+      "display": "pandas",
+      "aliases": ["pandas"],
+      "category": "ml_ai",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "numpy",
+      "display": "NumPy",
+      "aliases": ["numpy"],
+      "category": "ml_ai",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "mlflow",
+      "display": "MLflow",
+      "aliases": ["mlflow", "ml flow"],
+      "category": "ml_ai",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "huggingface",
+      "display": "Hugging Face",
+      "aliases": ["hugging face", "huggingface"],
+      "category": "ml_ai",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "keras",
+      "display": "Keras",
+      "aliases": ["keras"],
+      "category": "ml_ai",
+      "icon_slug": "keras",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "llm",
+      "display": "LLMs",
+      "aliases": ["llm", "large language model", "gpt", "openai", "llama"],
+      "category": "ml_ai",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "power_bi",
+      "display": "Power BI",
+      "aliases": ["power bi", "powerbi", "power-bi"],
+      "category": "bi_analytics",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "tableau",
+      "display": "Tableau",
+      "aliases": ["tableau"],
+      "category": "bi_analytics",
+      "icon_slug": "tableau",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "looker",
+      "display": "Looker",
+      "aliases": ["looker", "looker studio"],
+      "category": "bi_analytics",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "excel",
+      "display": "Excel",
+      "aliases": ["excel", "microsoft excel"],
+      "category": "bi_analytics",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "html_css",
+      "display": "HTML/CSS",
+      "aliases": ["html", "css", "html5", "css3"],
+      "category": "frontend",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "tailwind",
+      "display": "Tailwind CSS",
+      "aliases": ["tailwind", "tailwind css", "tailwindcss"],
+      "category": "frontend",
+      "icon_slug": "tailwindcss",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "bootstrap",
+      "display": "Bootstrap",
+      "aliases": ["bootstrap"],
+      "category": "frontend",
+      "icon_slug": "bootstrap",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "svelte",
+      "display": "Svelte",
+      "aliases": ["svelte"],
+      "category": "frontend",
+      "icon_slug": "svelte",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "redux",
+      "display": "Redux",
+      "aliases": ["redux"],
+      "category": "frontend",
+      "icon_slug": "redux",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "graphql",
+      "display": "GraphQL",
+      "aliases": ["graphql", "graph ql"],
+      "category": "frameworks",
+      "icon_slug": "graphql",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "rest_api",
+      "display": "REST API",
+      "aliases": ["rest api", "restful api", "restful"],
+      "category": "frameworks",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "pytest",
+      "display": "pytest",
+      "aliases": ["pytest"],
+      "category": "testing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "selenium",
+      "display": "Selenium",
+      "aliases": ["selenium"],
+      "category": "testing",
+      "icon_slug": "selenium",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "jira",
+      "display": "Jira",
+      "aliases": ["jira"],
+      "category": "other_tools",
+      "icon_slug": "jira",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "confluence",
+      "display": "Confluence",
+      "aliases": ["confluence"],
+      "category": "other_tools",
+      "icon_slug": "confluence",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "slack",
+      "display": "Slack",
+      "aliases": ["slack"],
+      "category": "other_tools",
+      "icon_slug": "slack",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap",
+      "display": "SAP",
+      "aliases": ["sap"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_mm",
+      "display": "SAP MM",
+      "aliases": ["sap mm", "sap materials management"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_sd",
+      "display": "SAP SD",
+      "aliases": ["sap sd", "sap sales and distribution"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_wm",
+      "display": "SAP WM",
+      "aliases": ["sap wm", "sap warehouse management"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_pp",
+      "display": "SAP PP",
+      "aliases": ["sap pp", "sap production planning"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_fi",
+      "display": "SAP FI",
+      "aliases": ["sap fi", "sap financial accounting"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_fico",
+      "display": "SAP FICO",
+      "aliases": ["sap fico"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_hana",
+      "display": "SAP HANA",
+      "aliases": ["sap hana"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_abap",
+      "display": "SAP ABAP",
+      "aliases": ["sap abap", "abap"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sap_bw",
+      "display": "SAP BW",
+      "aliases": ["sap bw", "sap business warehouse"],
+      "category": "sap_modules",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "scada",
+      "display": "SCADA",
+      "aliases": ["scada"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "plc",
+      "display": "PLC",
+      "aliases": ["plc", "programmable logic controller"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "lean_manufacturing",
+      "display": "Lean Manufacturing",
+      "aliases": ["lean manufacturing", "lean six sigma", "six sigma", "kaizen", "5s"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "cad",
+      "display": "CAD",
+      "aliases": ["cad", "autocad", "solidworks", "solid works", "catia"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "iot",
+      "display": "IoT",
+      "aliases": ["iot", "internet of things", "iiot"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "supply_chain",
+      "display": "Supply Chain",
+      "aliases": ["supply chain", "cadena de suministro", "logistics", "logistica"],
+      "category": "industrial_manufacturing",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "erp",
+      "display": "ERP",
+      "aliases": ["erp", "enterprise resource planning"],
+      "category": "enterprise_systems",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "salesforce",
+      "display": "Salesforce",
+      "aliases": ["salesforce"],
+      "category": "enterprise_systems",
+      "icon_slug": "salesforce",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "servicenow",
+      "display": "ServiceNow",
+      "aliases": ["servicenow", "service now"],
+      "category": "enterprise_systems",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "powerpoint",
+      "display": "PowerPoint",
+      "aliases": ["powerpoint", "power point"],
+      "category": "other_tools",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "access",
+      "display": "Microsoft Access",
+      "aliases": ["microsoft access", "ms access", "access database"],
+      "category": "other_tools",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    }
+  ],
+  "match_strategies": {
+    "phrase": {
+      "description": "Safe word-boundary matching for terms with unambiguous word-character aliases.",
+      "regex_pattern": "\\b{escaped}\\b",
+      "flags": ["IGNORECASE"]
+    },
+    "symbol_aware": {
+      "description": "Matching for terms containing non-word characters (+, #, ., /). Uses lookbehind/lookahead boundaries.",
+      "flags": ["IGNORECASE"]
+    },
+    "context_required": {
+      "description": "Ambiguous alias requires nearby technical context words. Not used standalone; aliases are listed with surrounding words.",
+      "flags": ["IGNORECASE"]
+    }
+  },
+  "policies": {
+    "explicit_mention": "Each skill is extracted only when explicitly mentioned in the text. Generic parent skills are not inferred from specific technologies (e.g., PostgreSQL mention alone does not produce 'sql').",
+    "deduplication": "Each canonical skill appears at most once per description, regardless of how many aliases matched.",
+    "canonical_only": "Output contains canonical keys only, not raw aliases or display labels.",
+    "ordering": "Returned in alphabetical order by canonical key, stable and deterministic.",
+    "topic_separation": "Topic keywords from BERTopic are never treated as extracted skills. They are topic metadata, not listing-level evidence."
+  }
+}
