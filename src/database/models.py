@@ -59,6 +59,20 @@ class Job(Base):
     cleaned_description = Column(Text)
     keywords_json = Column(JSONB)
 
+    # Skill extraction (Slice 2 — canonical skills per listing)
+    # ------------------------------------------------------------------
+    # NULL = not yet processed; [] = processed, no known skills detected;
+    # ["python","sql"] = normal result.
+    # Separate from keywords_json: that column stores BERTopic topic metadata,
+    # not per-listing deterministic skill evidence.
+    skills_json = Column(JSONB)
+    # Taxonomy version at extraction time (e.g. "1.0.0") for version-aware
+    # reprocessing.
+    skill_extractor_version = Column(String(32))
+    # Application-supplied timestamp; NOT a server_default so the caller
+    # controls when extraction was performed.
+    skills_extracted_at = Column(DateTime(timezone=True))
+
     date_posted = Column(String)
 
     # Tracker
