@@ -161,3 +161,7 @@ export function relativeDate(dateStr) {
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   return formatDate(dateStr);
 }
+
+export function fetchIndustryDemand() {
+  return getJSON("/analytics/industry-demand");
+}

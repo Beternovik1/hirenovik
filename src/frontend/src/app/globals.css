@@ -54,6 +54,7 @@ body {
    Analytics Design Tokens (Mexico 68 accent)
    ────────────────────────────────────────────── */
 :root {
+  --hirenovik-navbar-height: 57px;
   --hirenovik-analytics-canvas: #f8fafc;  /* matches --hirenovik-bg light theme */
   --hirenovik-analytics-surface: #FFFFFF;
   --hirenovik-analytics-surface-alt: #F4F2EF;
