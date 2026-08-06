@@ -96,6 +96,14 @@ export function fetchTrends(topicId) {
   return getJSON(`/trends?topic_id=${topicId}`);
 }
 
+export function fetchSalaryByRole() {
+  return getJSON("/analytics/salary-by-role");
+}
+
+export function fetchAnalyticsHealth() {
+  return getJSON("/analytics/health");
+}
+
 // --- POST endpoints ---
 
 export function fetchSearch(text, k = 10) {
@@ -152,4 +160,12 @@ export function relativeDate(dateStr) {
   if (days < 7) return `${days}d ago`;
   if (days < 30) return `${Math.floor(days / 7)}w ago`;
   return formatDate(dateStr);
+}
+
+export function fetchIndustryDemand() {
+  return getJSON("/analytics/industry-demand");
+}
+
+export function fetchSkillFrequency(limit = 30) {
+  return getJSON(`/analytics/skill-frequency?limit=${limit}`);
 }

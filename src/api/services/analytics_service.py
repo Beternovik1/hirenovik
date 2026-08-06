@@ -1,6 +1,7 @@
 """Service layer for DB-only analytics endpoints."""
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -191,7 +192,7 @@ def _build_item(bucket: dict[str, object]) -> SalaryByRoleItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
 
     return SalaryByRoleItem(
@@ -217,6 +218,8 @@ def _salary_midpoint(salary_min: object, salary_max: object) -> float | None:
 
     minimum = _to_float(salary_min)
     maximum = _to_float(salary_max)
+    if math.isnan(minimum) or math.isnan(maximum):
+        return None
     if minimum < 1 or maximum < 1 or minimum > maximum:
         return None
     return (minimum + maximum) / 2
@@ -326,7 +329,7 @@ def _build_industry_item(bucket: dict[str, object]) -> IndustryDemandItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     dates_scraped = bucket["dates_scraped"]
     dates_posted = bucket["dates_posted"]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
@@ -440,7 +443,7 @@ def _build_geography_item(bucket: dict[str, object]) -> GeographyItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
 
     return GeographyItem(
@@ -498,9 +501,11 @@ def summarize_skill_frequency(
         ascending, limited to ``limit`` items.
     """
     keyword_to_job_ids: dict[str, set[int]] = {}
+    total_listings = 0
     total_listings_with_keywords = 0
 
     for row in rows:
+        total_listings += 1
         keywords = _parse_keywords(row.keywords_json)
         if not keywords:
             continue
@@ -509,6 +514,12 @@ def summarize_skill_frequency(
             if kw not in keyword_to_job_ids:
                 keyword_to_job_ids[kw] = set()
             keyword_to_job_ids[kw].add(row.id)
+
+    keyword_coverage_pct = (
+        round(total_listings_with_keywords / total_listings * 100, 1)
+        if total_listings > 0
+        else 0.0
+    )
 
     items = [
         SkillFrequencyItem(keyword=kw, rows=len(job_ids))
@@ -521,6 +532,8 @@ def summarize_skill_frequency(
         items=items,
         total_unique_keywords=len(keyword_to_job_ids),
         total_listings_with_keywords=total_listings_with_keywords,
+        total_listings=total_listings,
+        keyword_coverage_pct=keyword_coverage_pct,
     )
 
 
@@ -621,7 +634,7 @@ def _build_time_trend_item(bucket: dict[str, object]) -> TimeTrendItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     date_posted_count = int(bucket["date_posted_count"])
 
     return TimeTrendItem(
