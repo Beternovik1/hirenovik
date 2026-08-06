@@ -307,3 +307,55 @@ class TestSingleton:
         e1 = get_extractor()
         e2 = get_extractor()
         assert e1 is e2
+
+
+# ---------------------------------------------------------------------------
+# Regression tests from real-data validation (Slice 1.5)
+# ---------------------------------------------------------------------------
+
+class TestRealDataRegression:
+    """Tests added after validating against real Hirenovik job descriptions."""
+
+    @pytest.fixture(scope="class")
+    def extractor(self):
+        return SkillExtractor()
+
+    def test_oracle_bare(self, extractor) -> None:
+        """Bare 'Oracle' in job descriptions means Oracle Database."""
+        assert "oracle_db" in extractor.extract("experience with Oracle and SQL")
+
+    def test_oracle_database(self, extractor) -> None:
+        assert "oracle_db" in extractor.extract("Oracle Database administration")
+
+    def test_etl_extracted(self, extractor) -> None:
+        assert "etl" in extractor.extract("build ETL pipelines")
+        assert "etl" in extractor.extract("Extract Transform Load processes")
+
+    def test_etl_spanish(self, extractor) -> None:
+        assert "etl" in extractor.extract("procesos ETL y data warehouse")
+
+    def test_nosql(self, extractor) -> None:
+        assert "nosql" in extractor.extract("experience with NoSQL databases")
+        assert "nosql" in extractor.extract("No SQL and relational experience")
+
+    def test_data_warehouse(self, extractor) -> None:
+        assert "data_warehouse" in extractor.extract("Data Warehouse architecture")
+        assert "data_warehouse" in extractor.extract("almacen de datos empresarial")
+
+    def test_spanish_ci(self, extractor) -> None:
+        assert "ci_cd" in extractor.extract("experiencia en integracion continua")
+        assert "ci_cd" in extractor.extract("implementacion de integracion continua")
+
+    def test_spanish_cd(self, extractor) -> None:
+        assert "ci_cd" in extractor.extract("procesos de entrega continua")
+
+    def test_power_automate(self, extractor) -> None:
+        assert "power_automate" in extractor.extract("experience with Power Automate")
+        assert "power_automate" in extractor.extract("PowerAutomate workflows")
+
+    def test_sharepoint(self, extractor) -> None:
+        assert "sharepoint" in extractor.extract("SharePoint administration")
+        assert "sharepoint" in extractor.extract("Share Point online")
+
+    def test_spanish_logistics_still_works(self, extractor) -> None:
+        assert "supply_chain" in extractor.extract("experiencia en logistica y cadena de suministro")

@@ -197,7 +197,7 @@
     {
       "canonical": "oracle_db",
       "display": "Oracle Database",
-      "aliases": ["oracle database", "oracle db", "oracle sql"],
+      "aliases": ["oracle", "oracle database", "oracle db", "oracle sql"],
       "category": "databases",
       "icon_slug": "oracle",
       "match_strategy": "phrase"
@@ -222,6 +222,14 @@
       "canonical": "cassandra",
       "display": "Cassandra",
       "aliases": ["cassandra"],
+      "category": "databases",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "nosql",
+      "display": "NoSQL",
+      "aliases": ["nosql", "no sql", "not only sql"],
       "category": "databases",
       "icon_slug": null,
       "match_strategy": "phrase"
@@ -270,6 +278,22 @@
       "canonical": "dbt",
       "display": "dbt",
       "aliases": ["dbt", "data build tool"],
+      "category": "data_engineering",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "etl",
+      "display": "ETL",
+      "aliases": ["etl", "extract transform load", "elt"],
+      "category": "data_engineering",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "data_warehouse",
+      "display": "Data Warehouse",
+      "aliases": ["data warehouse", "datawarehouse", "almacén de datos", "almacen de datos"],
       "category": "data_engineering",
       "icon_slug": null,
       "match_strategy": "phrase"
@@ -373,7 +397,7 @@
     {
       "canonical": "ci_cd",
       "display": "CI/CD",
-      "aliases": ["ci/cd", "ci cd", "continuous integration", "continuous delivery"],
+      "aliases": ["ci/cd", "ci cd", "continuous integration", "continuous delivery", "integración continua", "integracion continua", "entrega continua"],
       "category": "devops",
       "icon_slug": null,
       "match_strategy": "symbol_aware"
@@ -696,6 +720,22 @@
       "aliases": ["slack"],
       "category": "other_tools",
       "icon_slug": "slack",
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "power_automate",
+      "display": "Power Automate",
+      "aliases": ["power automate", "powerautomate"],
+      "category": "other_tools",
+      "icon_slug": null,
+      "match_strategy": "phrase"
+    },
+    {
+      "canonical": "sharepoint",
+      "display": "SharePoint",
+      "aliases": ["sharepoint", "share point"],
+      "category": "other_tools",
+      "icon_slug": null,
       "match_strategy": "phrase"
     },
     {
