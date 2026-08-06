@@ -59,6 +59,11 @@ class Job(Base):
     cleaned_description = Column(Text)
     keywords_json = Column(JSONB)
 
+    # Description enrichment provenance (Slice 3.5)
+    # NULL = never enriched; 'raw_description' = cleaned from stored text;
+    # 'detail_page' = fetched from live job-board detail page.
+    description_enrichment_source = Column(String(20))
+
     # Skill extraction (Slice 2 — canonical skills per listing)
     # ------------------------------------------------------------------
     # NULL = not yet processed; [] = processed, no known skills detected;
