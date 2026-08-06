@@ -1,6 +1,24 @@
 import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import NavBar from "@/components/NavBar";
+
+const mexcellent = localFont({
+  src: [
+    {
+      path: "../../fonts/Mexcellent Rg.otf",
+      weight: "400",
+      style: "normal",
+    },
+    {
+      path: "../../fonts/Mexcellent 3d.otf",
+      weight: "700",
+      style: "normal",
+    },
+  ],
+  variable: "--font-mexcellent",
+  display: "swap",
+});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -22,7 +40,7 @@ export default function RootLayout({ children }) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${mexcellent.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <head>
@@ -49,7 +67,7 @@ export default function RootLayout({ children }) {
           {children}
         </main>
         <footer className="border-t border-hirenovik-border py-6 text-center text-sm text-hirenovik-text-secondary">
-          Hirenovik — LATAM Tech Jobs Analytics · Powered by BERTopic + FAISS + XGBoost
+          Hirenovik &mdash; Mexico &amp; LATAM job-market intelligence
         </footer>
       </body>
     </html>

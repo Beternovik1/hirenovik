@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 
 const NAV_LINKS = [
   { href: "/", label: "Dashboard" },
+  { href: "/analytics", label: "Analytics" },
   { href: "/jobs", label: "Jobs" },
   { href: "/topics", label: "Topics" },
   { href: "/search", label: "Search" },
@@ -63,7 +64,7 @@ export default function NavBar() {
             href={link.href}
             className={`px-3 py-1.5 rounded-md text-sm transition-colors ${
               isActive(link.href)
-                ? "text-hirenovik-accent font-medium bg-hirenovik-bg/40"
+                ? "text-[#1E3A5F] font-medium bg-hirenovik-bg/40"
                 : "text-hirenovik-text-secondary hover:text-hirenovik-text hover:bg-hirenovik-bg/20"
             }`}
           >

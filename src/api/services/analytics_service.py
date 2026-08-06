@@ -1,6 +1,7 @@
 """Service layer for DB-only analytics endpoints."""
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -191,7 +192,7 @@ def _build_item(bucket: dict[str, object]) -> SalaryByRoleItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
 
     return SalaryByRoleItem(
@@ -217,6 +218,8 @@ def _salary_midpoint(salary_min: object, salary_max: object) -> float | None:
 
     minimum = _to_float(salary_min)
     maximum = _to_float(salary_max)
+    if math.isnan(minimum) or math.isnan(maximum):
+        return None
     if minimum < 1 or maximum < 1 or minimum > maximum:
         return None
     return (minimum + maximum) / 2
@@ -326,7 +329,7 @@ def _build_industry_item(bucket: dict[str, object]) -> IndustryDemandItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     dates_scraped = bucket["dates_scraped"]
     dates_posted = bucket["dates_posted"]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
@@ -440,7 +443,7 @@ def _build_geography_item(bucket: dict[str, object]) -> GeographyItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     salary_visibility_rate = salary_visible_rows / listings if listings else 0.0
 
     return GeographyItem(
@@ -621,7 +624,7 @@ def _build_time_trend_item(bucket: dict[str, object]) -> TimeTrendItem:
     listings = int(bucket["listings"])
     valid_salary_rows = int(bucket["valid_salary_rows"])
     salary_visible_rows = int(bucket["salary_visible_rows"])
-    midpoints = bucket["midpoints"]
+    midpoints = [v for v in bucket["midpoints"] if not math.isnan(v)]
     date_posted_count = int(bucket["date_posted_count"])
 
     return TimeTrendItem(

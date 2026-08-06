@@ -50,6 +50,54 @@ body {
   font-family: var(--font-sans, Arial, Helvetica, sans-serif);
 }
 
+/* ──────────────────────────────────────────────
+   Analytics Design Tokens (Mexico 68 accent)
+   ────────────────────────────────────────────── */
+:root {
+  --hirenovik-analytics-canvas: #f8fafc;  /* matches --hirenovik-bg light theme */
+  --hirenovik-analytics-surface: #FFFFFF;
+  --hirenovik-analytics-surface-alt: #F4F2EF;
+  --hirenovik-analytics-ink: #18181B;
+  --hirenovik-analytics-ink-secondary: #71717A;
+  --hirenovik-analytics-accent: #1E3A5F;
+  --hirenovik-analytics-terracotta: #C44536;
+  --hirenovik-analytics-forest: #2D6A4F;
+  --hirenovik-analytics-gold: #D4A017;
+  --hirenovik-analytics-gold-dark: #8B6914;
+  --hirenovik-analytics-rule: #E6E3DE;
+}
+
+@theme inline {
+  --color-hirenovik-analytics-canvas: var(--hirenovik-analytics-canvas);
+  --color-hirenovik-analytics-surface: var(--hirenovik-analytics-surface);
+  --color-hirenovik-analytics-surface-alt: var(--hirenovik-analytics-surface-alt);
+  --color-hirenovik-analytics-ink: var(--hirenovik-analytics-ink);
+  --color-hirenovik-analytics-ink-secondary: var(--hirenovik-analytics-ink-secondary);
+  --color-hirenovik-analytics-accent: var(--hirenovik-analytics-accent);
+  --color-hirenovik-analytics-terracotta: var(--hirenovik-analytics-terracotta);
+  --color-hirenovik-analytics-forest: var(--hirenovik-analytics-forest);
+  --color-hirenovik-analytics-gold: var(--hirenovik-analytics-gold);
+  --color-hirenovik-analytics-gold-dark: var(--hirenovik-analytics-gold-dark);
+  --color-hirenovik-analytics-rule: var(--hirenovik-analytics-rule);
+  --font-mexcellent: var(--font-mexcellent);
+
+  --animate-analytics-shimmer: analytics-shimmer 1.5s ease-in-out infinite;
+  @keyframes analytics-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}
+
+.analytics-loading-shimmer {
+  background: linear-gradient(90deg,
+    var(--hirenovik-analytics-surface-alt) 25%,
+    var(--hirenovik-analytics-surface) 37%,
+    var(--hirenovik-analytics-surface-alt) 63%
+  );
+  background-size: 200% 100%;
+  animation: analytics-shimmer 1.5s ease-in-out infinite;
+}
+
 /* Sun/Moon toggle button — no background, minimal */
 .theme-toggle {
   background: none;

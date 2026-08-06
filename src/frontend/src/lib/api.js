@@ -96,6 +96,14 @@ export function fetchTrends(topicId) {
   return getJSON(`/trends?topic_id=${topicId}`);
 }
 
+export function fetchSalaryByRole() {
+  return getJSON("/analytics/salary-by-role");
+}
+
+export function fetchAnalyticsHealth() {
+  return getJSON("/analytics/health");
+}
+
 // --- POST endpoints ---
 
 export function fetchSearch(text, k = 10) {
