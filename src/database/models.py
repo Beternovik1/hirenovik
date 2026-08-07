@@ -7,8 +7,10 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -159,6 +161,59 @@ class NotificationLog(Base):
         return (
             f"<NotificationLog(job_id={self.job_id}, "
             f"profile_name='{self.profile_name}', sent_at='{self.sent_at}')>"
+        )
+
+
+class JobDuplicateLink(Base):
+    """Confirmed duplicate relationship between two job listings.
+
+    One row per duplicate pair.  The ``duplicate_job_id`` should NOT be
+    counted independently in analytics or processed by NLP backfills.
+    The ``canonical_job_id`` represents the vacancy for all downstream
+    purposes.
+
+    Invariants enforced at the application level (not in schema):
+        - ``duplicate_job_id != canonical_job_id``
+        - One confirmed canonical per duplicate row per scope.
+    """
+
+    __tablename__ = "job_duplicate_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    duplicate_job_id = Column(
+        BigInteger, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    canonical_job_id = Column(
+        BigInteger, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    scope = Column(String(20), nullable=False)
+    method = Column(String(50), nullable=False)
+    confidence = Column(Float, nullable=False)
+    status = Column(String(20), nullable=False)
+    dedup_version = Column(String(32), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "duplicate_job_id", "scope", "status",
+            name="uq_duplicate_link",
+        ),
+        Index(
+            "idx_duplicate_links_canonical",
+            "canonical_job_id", "scope",
+            unique=False,
+        ),
+        Index(
+            "idx_duplicate_links_scope_status",
+            "scope", "status",
+            unique=False,
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<JobDuplicateLink(dup={self.duplicate_job_id} -> "
+            f"canon={self.canonical_job_id}, scope={self.scope})>"
         )
 
 
