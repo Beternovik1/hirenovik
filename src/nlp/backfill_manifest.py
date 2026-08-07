@@ -67,11 +67,25 @@ class BackfillManifest:
         self.source = source
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.affected_ids: list[int] = []
+        # Dedup-specific: (duplicate_job_id, canonical_job_id, scope, method, status)
+        self.dedup_links: list[dict] = []
         self.metadata = metadata or {}
 
     def add_batch(self, ids: list[int]) -> None:
         """Record a batch of affected job IDs."""
         self.affected_ids.extend(ids)
+
+    def add_dedup_link(
+        self, dup_id: int, canon_id: int, scope: str, method: str, status: str
+    ) -> None:
+        """Record a deduplication relationship for rollback."""
+        self.dedup_links.append({
+            "duplicate_job_id": dup_id,
+            "canonical_job_id": canon_id,
+            "scope": scope,
+            "method": method,
+            "status": status,
+        })
 
     def save(self, directory: Optional[Path] = None) -> Path:
         """Persist the manifest to disk.
@@ -99,6 +113,7 @@ class BackfillManifest:
             "started_at": self.started_at,
             "affected_count": len(self.affected_ids),
             "affected_ids": self.affected_ids,
+            "dedup_links": self.dedup_links,
             "metadata": self.metadata,
         }
 

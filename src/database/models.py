@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -165,16 +166,17 @@ class NotificationLog(Base):
 
 
 class JobDuplicateLink(Base):
-    """Confirmed duplicate relationship between two job listings.
+    """Duplicate relationship between two job listings.
 
-    One row per duplicate pair.  The ``duplicate_job_id`` should NOT be
-    counted independently in analytics or processed by NLP backfills.
-    The ``canonical_job_id`` represents the vacancy for all downstream
-    purposes.
+    Multiple ``candidate`` relationships are allowed per duplicate job
+    (e.g. a Computrabajo listing may match several OCC candidates).
+    Only one ``confirmed`` canonical relationship is allowed per
+    duplicate job + scope.
 
-    Invariants enforced at the application level (not in schema):
-        - ``duplicate_job_id != canonical_job_id``
-        - One confirmed canonical per duplicate row per scope.
+    Invariants enforced in schema:
+        - ``duplicate_job_id != canonical_job_id`` (CHECK)
+        - Exact pair uniqueness: ``(dup, canon, scope)``
+        - At most one confirmed per ``(dup, scope)`` (partial unique index)
     """
 
     __tablename__ = "job_duplicate_links"
@@ -194,9 +196,15 @@ class JobDuplicateLink(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        # Prevent exact duplicate pair rows
         UniqueConstraint(
-            "duplicate_job_id", "scope", "status",
-            name="uq_duplicate_link",
+            "duplicate_job_id", "canonical_job_id", "scope",
+            name="uq_duplicate_pair",
+        ),
+        # No self-references
+        CheckConstraint(
+            "duplicate_job_id != canonical_job_id",
+            name="ck_no_self_reference",
         ),
         Index(
             "idx_duplicate_links_canonical",
@@ -208,13 +216,22 @@ class JobDuplicateLink(Base):
             "scope", "status",
             unique=False,
         ),
+        # PostgreSQL-only: at most one confirmed per (dup, scope).
+        # Declared as a separate Index below for dialect safety.
     )
 
     def __repr__(self):
         return (
             f"<JobDuplicateLink(dup={self.duplicate_job_id} -> "
-            f"canon={self.canonical_job_id}, scope={self.scope})>"
+            f"canon={self.canonical_job_id}, scope={self.scope}, "
+            f"status={self.status})>"
         )
+
+
+# Partial unique index for confirmed constraint — declared separately
+# because SQLAlchemy's Index does not support postgresql_where in
+# __table_args__ cleanly. The Alembic migration creates it explicitly.
+# SQLite tests use a simplified constraint instead; see conftest._create_partial_unique_index.
 
 
 def db_connect():

@@ -310,8 +310,12 @@ class JobDeduplicator:
                         confidence, status, dedup_version, created_at)
                        VALUES (:dup, :canon, :scope, :method,
                                :conf, :status, :version, :ts)
-                       ON CONFLICT (duplicate_job_id, scope, status)
-                       DO NOTHING"""
+                       ON CONFLICT (duplicate_job_id, canonical_job_id, scope)
+                       DO UPDATE SET status = EXCLUDED.status,
+                                     dedup_version = EXCLUDED.dedup_version,
+                                     confidence = EXCLUDED.confidence,
+                                     method = EXCLUDED.method,
+                                     created_at = EXCLUDED.created_at"""
                 ),
                 {
                     "dup": dup["id"],
@@ -325,7 +329,10 @@ class JobDeduplicator:
                 },
             )
             if manifest:
-                manifest.add_batch([dup["id"]])
+                manifest.add_dedup_link(
+                    dup["id"], canonical_id,
+                    SCOPE_SAME_SOURCE, METHOD_COMPUTRABAJO_URL, STATUS_CONFIRMED,
+                )
 
 
 # ---------------------------------------------------------------------------

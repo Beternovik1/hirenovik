@@ -1,56 +1,39 @@
 """add_job_duplicate_links
 
-Create the ``job_duplicate_links`` table for storing confirmed duplicate
-relationships between job listings.
+Create the ``job_duplicate_links`` table for storing duplicate
+relationships between job listings — both confirmed same-source
+matches and future candidate cross-source matches.
 
 Revision ID: c7d3e4a5f8b9
 Revises: b6e2f3a4d7c9
 Create Date: 2026-08-07 03:30:00.000000 UTC
 
-Table contract
----------------
+Constraints
+-----------
 
-``job_duplicate_links`` stores operational deduplication metadata
-separately from the raw scraped vacancy data in ``jobs``.
+``uq_duplicate_pair`` — UNIQUE(duplicate_job_id, canonical_job_id, scope)
+    Prevents inserting the exact same relationship row twice, regardless
+    of status.  Renamed from uq_duplicate_link (which incorrectly placed
+    ``status`` in the key, blocking multiple candidate relationships).
 
-Each row represents one confirmed duplicate relationship:
+``ck_no_self_reference`` — CHECK(duplicate_job_id != canonical_job_id)
+    A row must never point to itself.
 
-- ``duplicate_job_id`` — the row that should NOT be counted
-  independently in analytics or processed by NLP backfills.
+``idx_one_confirmed`` — partial unique index
+    UNIQUE(duplicate_job_id, scope) WHERE status = 'confirmed'.
+    At most one confirmed canonical relationship per duplicate per scope.
+    Multiple candidate relationships are explicitly allowed.
 
-- ``canonical_job_id`` — the row representing the canonical vacancy.
+These constraints together:
 
-- ``scope`` — ``'same_source'`` for Computrabajo fragment duplicates
-  (this slice) or ``'cross_source'`` for future cross-platform matching.
-
-- ``method`` — the classification method (e.g.
-  ``'computrabajo_canonical_url'``).
-
-- ``confidence`` — ``1.0`` for deterministic Computrabajo URL matching;
-  lower values reserved for future fuzzy cross-source methods.
-
-- ``status`` — ``'confirmed'`` for this slice; ``'candidate'`` and
-  ``'rejected'`` for future cross-source workflows.
-
-- ``dedup_version`` — version of the deduplication logic.
-
-- ``created_at`` — UTC timestamp when the relationship was recorded.
-
-Invariants enforced at the application level:
-
-- ``duplicate_job_id != canonical_job_id`` (no self-references).
-- One confirmed canonical per duplicate row per scope.
-- No cycles in the same-source graph (canonical must not itself be
-  a duplicate in another confirmed link).
-
-Foreign keys use ON DELETE RESTRICT: deleting a job row that is
-referenced by a duplicate link is blocked. This protects the
-deduplication audit trail. Links must be explicitly deleted before
-their referenced jobs can be removed.
-
-Unique constraint ``uq_duplicate_link`` on
-``(duplicate_job_id, scope, status)`` prevents double-classifying
-the same row under the same scope and status.
+- Allow:  100→200 candidate, 100→300 candidate, 100→400 candidate
+  (multiple candidates for cross-source matching)
+- Reject: 100→200 confirmed, 100→300 confirmed
+  (only one confirmed per scope)
+- Reject: 100→200 confirmed inserted twice
+  (pair-level uniqueness)
+- Reject: 100→100
+  (self-reference)
 """
 
 from __future__ import annotations
@@ -79,6 +62,16 @@ def upgrade() -> None:
         sa.Column("dedup_version", sa.String(length=32), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
+        # Pair-level uniqueness: no duplicate exact relationship rows.
+        sa.UniqueConstraint(
+            "duplicate_job_id", "canonical_job_id", "scope",
+            name="uq_duplicate_pair",
+        ),
+        # No self-references.
+        sa.CheckConstraint(
+            "duplicate_job_id != canonical_job_id",
+            name="ck_no_self_reference",
+        ),
         sa.ForeignKeyConstraint(
             ["duplicate_job_id"], ["jobs.id"],
             ondelete="RESTRICT",
@@ -87,11 +80,18 @@ def upgrade() -> None:
             ["canonical_job_id"], ["jobs.id"],
             ondelete="RESTRICT",
         ),
-        sa.UniqueConstraint(
-            "duplicate_job_id", "scope", "status",
-            name="uq_duplicate_link",
-        ),
     )
+
+    # Partial unique index: at most one confirmed canonical per (dup, scope).
+    # PostgreSQL only — SQLite tests use a simplified constraint.
+    op.create_index(
+        "idx_one_confirmed",
+        "job_duplicate_links",
+        ["duplicate_job_id", "scope"],
+        unique=True,
+        postgresql_where=sa.text("status = 'confirmed'"),
+    )
+
     op.create_index(
         "idx_duplicate_links_canonical",
         "job_duplicate_links",
@@ -109,4 +109,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("idx_duplicate_links_scope_status", table_name="job_duplicate_links")
     op.drop_index("idx_duplicate_links_canonical", table_name="job_duplicate_links")
+    op.drop_index("idx_one_confirmed", table_name="job_duplicate_links")
     op.drop_table("job_duplicate_links")
