@@ -45,6 +45,7 @@ if str(_project_root) not in sys.path:
 
 from src.database.models import Job, db_connect
 from src.nlp.preprocess import TextPreprocessor
+from src.nlp.backfill_manifest import BackfillManifest
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ class DescriptionPreparer:
         dry_run: bool = False,
         force: bool = False,
         source: Optional[str] = None,
+        manifest: Optional[BackfillManifest] = None,
     ) -> PreparationMetrics:
         """Run the preparation backfill.
 
@@ -279,6 +281,8 @@ class DescriptionPreparer:
                         metrics.prepared += 1
                         metrics.raw_lengths.append(len(raw or ""))
                         metrics.cleaned_lengths.append(len(cleaned))
+                        if manifest is not None and not dry_run:
+                            manifest.add_batch([job.id])
 
                     if not dry_run:
                         try:

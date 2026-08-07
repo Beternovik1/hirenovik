@@ -51,6 +51,7 @@ if str(_project_root) not in sys.path:
 from src.database.models import Job, db_connect
 from src.nlp.skill_extractor import SkillExtractor
 from src.nlp.skill_taxonomy import load_taxonomy
+from src.nlp.backfill_manifest import BackfillManifest
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +158,7 @@ class SkillEnricher:
         dry_run: bool = False,
         force: bool = False,
         source: Optional[str] = None,
+        manifest: Optional[BackfillManifest] = None,
     ) -> EnrichmentMetrics:
         """Run the backfill over eligible job descriptions.
 
@@ -203,6 +205,8 @@ class SkillEnricher:
                                 metrics.with_skills += 1
                             else:
                                 metrics.zero_skills += 1
+                            if manifest is not None and not dry_run:
+                                manifest.add_batch([row.id])
                         except Exception:
                             logger.exception(
                                 "Failed to process job %d; continuing", row.id
