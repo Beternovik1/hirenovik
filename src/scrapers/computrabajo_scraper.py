@@ -5,6 +5,7 @@ import random
 import re
 import time
 from typing import Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 import requests
@@ -17,6 +18,46 @@ from fake_useragent import UserAgent
 from scrapers.base_scraper import BaseScraper
 
 logger = logging.getLogger(__name__)
+
+
+def canonicalize_computrabajo_url(url: str) -> str:
+    """Remove the URL fragment from a Computrabajo listing URL.
+
+    Computrabajo appends ``#lc=ListOffers-Score...`` fragments that
+    represent listing/ranking context, not vacancy identity.  These
+    fragments caused ~7,767 duplicate database rows (75.5% of all
+    Computrabajo listings) because the ``UNIQUE(job_url)`` constraint
+    treats ``job#A`` and ``job#B`` as distinct URLs.
+
+    This function strips the fragment while preserving scheme, host,
+    path, and query parameters.  It does NOT normalise any other part
+    of the URL (no lowercasing, query-stripping, or host-rewriting).
+
+    Args:
+        url: A raw Computrabajo job URL, possibly with a fragment.
+
+    Returns:
+        The canonical URL with the fragment removed.  Returns *url*
+        unchanged if it has no fragment or cannot be parsed.
+
+    Examples:
+        >>> canonicalize_computrabajo_url(
+        ...     "https://mx.computrabajo.com/job/123#lc=ListOffers-Score4-11"
+        ... )
+        "https://mx.computrabajo.com/job/123"
+
+        >>> canonicalize_computrabajo_url(
+        ...     "https://mx.computrabajo.com/job/123?ref=search#lc=ListOffers-Score4-11"
+        ... )
+        "https://mx.computrabajo.com/job/123?ref=search"
+    """
+    if not isinstance(url, str) or not url.strip():
+        return url if isinstance(url, str) else ""
+    try:
+        parts = urlsplit(url)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    except (ValueError, AttributeError):
+        return url
 
 COUNTRY_CONFIG = {
     "MX": {"subdomain": "mx", "currency": "MXN"},
@@ -173,6 +214,8 @@ class ComputrabajoScraper(BaseScraper):
 
                         href = title_tag.get("href") if title_tag else None
                         job_url = f"{base_url}{href}" if (href and href.startswith("/")) else href
+                        if job_url:
+                            job_url = canonicalize_computrabajo_url(job_url)
 
                         if not job_url:
                             # Malformed card — promoted ad, banner, or DOM

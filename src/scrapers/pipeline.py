@@ -16,7 +16,7 @@ from shared.config import (
     get_search_config_for_profile,
     get_profile_results_limit,
 )
-from scrapers.computrabajo_scraper import ComputrabajoScraper
+from scrapers.computrabajo_scraper import ComputrabajoScraper, canonicalize_computrabajo_url
 from scrapers.occ_scraper import OCCScraper
 from shared.config import include_linkedin_today
 from notifications.matcher import matches_alert_geography
@@ -44,10 +44,13 @@ def _map_phase1_records(df, search_term, industry_niche):
         if not job_url:
             logger.warning("Skipping record with null job_url for %s", search_term)
             continue
+        site = row.get("site")
+        if site == "computrabajo":
+            job_url = canonicalize_computrabajo_url(job_url)
         raw_location = clean(row.get("raw_location"), "Ubicación desconocida")
         records.append({
-            "site": row.get("site"),
-            "job_url": row.get("job_url"),
+            "site": site,
+            "job_url": job_url,
             "title": str(clean(row.get("title"), "")).upper(),
             "company": clean(row.get("company"), "Empresa confidencial"),
             "raw_location": raw_location,

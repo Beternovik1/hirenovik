@@ -262,3 +262,57 @@ class TestFilterOccAlertGeography:
         assert records[0]["raw_location"] == "Celaya, GUA, MX"
         assert records[0]["industry_niche"] == _ALERT_NICHE
         assert records[0]["status"] == "PENDING_ENRICHMENT"
+
+
+# ---------------------------------------------------------------------------
+# Computrabajo URL canonicalization in pipeline (Slice 3.6)
+# ---------------------------------------------------------------------------
+
+
+class TestComputrabajoUrlCanonicalization:
+    def test_fragment_variants_map_to_same_canonical_url(self) -> None:
+        base_url = "https://mx.computrabajo.com/ofertas/job-ABC123?ref=search"
+        df = pd.DataFrame(
+            {
+                "site": ["computrabajo", "computrabajo"],
+                "job_url": [
+                    f"{base_url}#lc=ListOffers-Score1",
+                    f"{base_url}#lc=ListOffers-Score2",
+                ],
+                "title": ["Developer", "Developer"],
+                "company": ["Corp", "Corp"],
+                "raw_location": ["Leon, GTO", "Leon, GTO"],
+            }
+        )
+        records = _map_phase1_records(df, "Developer", "Desarrollo")
+        assert [r["job_url"] for r in records] == [base_url, base_url]
+
+    def test_non_computrabajo_url_unchanged(self) -> None:
+        original_url = (
+            "https://example.com/job/1?ref=search#candidate-fragment"
+        )
+        df = pd.DataFrame(
+            {
+                "site": ["occ"],
+                "job_url": [original_url],
+                "title": ["Developer"],
+                "company": ["Corp"],
+                "raw_location": ["Leon, GTO"],
+            }
+        )
+        records = _map_phase1_records(df, "Developer", "Desarrollo")
+        assert records[0]["job_url"] == original_url
+
+    def test_no_fragment_url_unchanged(self) -> None:
+        url = "https://mx.computrabajo.com/ofertas/job-ABC123"
+        df = pd.DataFrame(
+            {
+                "site": ["computrabajo"],
+                "job_url": [url],
+                "title": ["Dev"],
+                "company": ["Corp"],
+                "raw_location": ["CDMX"],
+            }
+        )
+        records = _map_phase1_records(df, "Dev", "Desarrollo")
+        assert records[0]["job_url"] == url
