@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from src.api.services.analytics_service import (
     ROLE_BUCKETS,
-    _parse_keywords,
+    _parse_skills_array,
     classify_role_family,
     summarize_geography,
     summarize_industry_demand,
@@ -199,123 +199,69 @@ def test_summarize_industry_demand_valid_salary_filtering():
 
 
 def test_skill_frequency_returns_expected_shape(client, mock_db_session):
-    """GET /analytics/skill-frequency returns keywords with expected shape."""
+    """GET /analytics/skill-frequency returns skills from skills_json."""
     from src.database.models import Job
 
     session = mock_db_session
     session.add_all([
-        Job(
-            id=100,
-            site="test",
-            job_url="https://test.com/job/100",
-            title="Python Developer",
-            company="Dev Co",
-            raw_location="Remote",
-            career="Developer",
-            job_type="remoto",
-            description="Build apps",
-            status="NEW",
-            keywords_json=["python", "sql", "aws"],
-        ),
-        Job(
-            id=101,
-            site="test",
-            job_url="https://test.com/job/101",
-            title="SQL Analyst",
-            company="Data Co",
-            raw_location="Remote",
-            career="Analyst",
-            job_type="remoto",
-            description="Analyze data",
-            status="NEW",
-            keywords_json=["sql", "excel"],
-        ),
-        Job(
-            id=102,
-            site="test",
-            job_url="https://test.com/job/102",
-            title="Manager",
-            company="Biz Co",
-            raw_location="Remote",
-            career="Manager",
-            job_type="presencial",
-            description="Manage things",
-            status="NEW",
-            keywords_json=None,
-        ),
+        Job(id=100, site="test", job_url="https://t.com/100", title="Dev",
+            company="C", raw_location="R", status="NEW",
+            skills_json=["python", "sql", "aws"]),
+        Job(id=101, site="test", job_url="https://t.com/101", title="Analyst",
+            company="C", raw_location="R", status="NEW",
+            skills_json=["sql", "excel"]),
+        Job(id=102, site="test", job_url="https://t.com/102", title="Mgr",
+            company="C", raw_location="R", status="NEW",
+            skills_json=None),
     ])
     session.commit()
 
     response = client.get("/analytics/skill-frequency")
-
     assert response.status_code == 200
     data = response.json()
-    assert set(data) == {"items", "total_unique_keywords", "total_listings_with_keywords"}
-    assert data["total_listings_with_keywords"] == 2
+    for key in ("items", "processed_canonical_jobs", "canonical_jobs_total",
+                "skill_coverage", "total_unique_skills_observed"):
+        assert key in data, f"Missing key: {key}"
+    assert data["processed_canonical_jobs"] >= 1
     assert len(data["items"]) >= 1
-    assert set(data["items"][0]) == {"keyword", "rows"}
-
-    sql_item = next(it for it in data["items"] if it["keyword"] == "sql")
-    assert sql_item["rows"] == 2
+    assert set(data["items"][0]) == {"skill", "job_count", "prevalence"}
 
 
-def test_skill_frequency_excludes_null_and_empty_keywords():
-    """Rows with null or empty keywords_json must not count towards listings or keywords."""
-    rows = [
-        SimpleNamespace(id=1, title="t1", salary_min=None, salary_max=None, keywords_json=None),
-        SimpleNamespace(id=2, title="t2", salary_min=None, salary_max=None, keywords_json="[]"),
-        SimpleNamespace(id=3, title="t3", salary_min=None, salary_max=None, keywords_json='["python"]'),
-    ]
-    result = summarize_skill_frequency(rows)
-
-    assert isinstance(result, SkillFrequencyResponse)
-    assert result.total_listings_with_keywords == 1
-    assert result.total_unique_keywords == 1
-    assert len(result.items) == 1
-    assert result.items[0].keyword == "python"
-    assert result.items[0].rows == 1
+def test_skill_frequency_excludes_null_and_empty():
+    """skills_json NULL and [] are handled: NULL excluded, [] in denominator."""
+    assert _parse_skills_array(None) == []
+    assert _parse_skills_array([]) == []
+    assert _parse_skills_array(["python", "sql"]) == ["python", "sql"]
+    assert _parse_skills_array('["python", "SQL", null]') == ["python", "sql"]
 
 
 def test_skill_frequency_limit_parameter(client, mock_db_session):
-    """limit query parameter truncates returned items to the requested number."""
+    """limit query parameter truncates returned items."""
     from src.database.models import Job
 
     session = mock_db_session
-    keywords_list = [f"skill_{i}" for i in range(10)]
-    session.add(
-        Job(
-            id=200,
-            site="test",
-            job_url="https://test.com/job/200",
-            title="Multi-skill Engineer",
-            company="Skills Co",
-            raw_location="Remote",
-            career="Engineer",
-            job_type="remoto",
-            description="Many skills",
-            status="NEW",
-            keywords_json=keywords_list,
-        ),
-    )
+    skills_list = [f"skill_{i}" for i in range(10)]
+    session.add(Job(id=200, site="test", job_url="https://t.com/200",
+                     title="T", company="C", raw_location="R", status="NEW",
+                     skills_json=skills_list))
     session.commit()
 
     response = client.get("/analytics/skill-frequency?limit=3")
-
     assert response.status_code == 200
     data = response.json()
     assert len(data["items"]) == 3
-    assert data["total_unique_keywords"] == 10
-    assert data["total_listings_with_keywords"] == 1
+    assert data["total_unique_skills_observed"] == 10
+    assert data["processed_canonical_jobs"] == 1
 
 
-def test_parse_keywords_handles_edge_cases():
-    """_parse_keywords handles None, empty, invalid JSON, and mixed types."""
-    assert _parse_keywords(None) == []
-    assert _parse_keywords("") == []
-    assert _parse_keywords("[]") == []
-    assert _parse_keywords("not json") == []
-    assert _parse_keywords('["python", "SQL", null]') == ["python", "sql"]
-    assert _parse_keywords(["Python", "  aws  ", ""]) == ["python", "aws"]
+def test_parse_skills_array_handles_edge_cases():
+    """_parse_skills_array handles various input types safely."""
+    assert _parse_skills_array(None) == []
+    assert _parse_skills_array("") == []
+    assert _parse_skills_array("[]") == []
+    assert _parse_skills_array("not json") == []
+    assert _parse_skills_array('["python", "SQL", null]') == ["python", "sql"]
+    assert _parse_skills_array(["Python", "  aws  ", ""]) == ["python", "aws"]
 
 
 def test_geography_returns_expected_shape(client, mock_db_session):

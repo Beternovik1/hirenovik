@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from statistics import median
 
+from sqlalchemy import func, and_, exists
 from sqlalchemy.orm import Session
 
 from src.api.schemas.analytics import (
@@ -22,7 +23,7 @@ from src.api.schemas.analytics import (
     TimeTrendItem,
     TimeTrendResponse,
 )
-from src.database.models import Job
+from src.database.models import Job, JobDuplicateLink
 
 MIN_INTERPRETABLE_LISTINGS = 30
 MIN_INTERPRETABLE_VALID_SALARIES = 10
@@ -464,25 +465,82 @@ def _build_geography_item(bucket: dict[str, object]) -> GeographyItem:
     )
 
 
-def get_skill_frequency(db: Session, limit: int = 50) -> SkillFrequencyResponse:
-    """Return global keyword frequency from the keywords_json column.
+def get_skill_frequency(db: Session, limit: int = 30) -> SkillFrequencyResponse:
+    """Return canonical skill frequency from skills_json.
 
-    Args:
-        db: SQLAlchemy session.
-        limit: Maximum number of keywords to return (default 50, max 200).
+    Only canonical/independent jobs count — confirmed duplicate
+    observations are excluded.  Jobs with ``skills_json IS NULL``
+    are excluded from the processed population.
 
-    Returns:
-        ``SkillFrequencyResponse`` with items sorted by count descending,
-        then keyword ascending.
+    Uses Python-side JSON aggregation for SQLite/PostgreSQL compatibility.
     """
-    rows = db.query(
-        Job.id,
-        Job.title,
-        Job.salary_min,
-        Job.salary_max,
-        Job.keywords_json,
-    ).all()
-    return summarize_skill_frequency(rows, limit=limit)
+    # Canonical jobs: exclude confirmed duplicates
+    canonical = db.query(Job.id).filter(
+        ~exists().where(
+            and_(
+                JobDuplicateLink.duplicate_job_id == Job.id,
+                JobDuplicateLink.status == "confirmed",
+            )
+        )
+    )
+
+    canonical_total = canonical.count()
+    processed = canonical.filter(Job.skills_json.isnot(None))
+    processed_total = processed.count()
+
+    # Aggregate in Python for cross-dialect compatibility
+    skill_to_jobs: dict[str, set[int]] = {}
+    with_skills = 0
+    for (job_id, skills_val) in db.query(Job.id, Job.skills_json).filter(
+        Job.id.in_(processed.with_entities(Job.id))
+    ).all():
+        skills = _parse_skills_array(skills_val)
+        if skills:
+            with_skills += 1
+        for skill in skills:
+            skill_to_jobs.setdefault(skill, set()).add(job_id)
+
+    items = [
+        SkillFrequencyItem(
+            skill=skill,
+            job_count=len(job_ids),
+            prevalence=round(len(job_ids) / processed_total, 4) if processed_total > 0 else 0.0,
+        )
+        for skill, job_ids in skill_to_jobs.items()
+    ]
+    items.sort(key=lambda i: (-i.job_count, i.skill))
+    items = items[:limit]
+
+    zero_skills = processed_total - with_skills
+    unique_skills = len(skill_to_jobs)
+    coverage = round(processed_total / canonical_total, 4) if canonical_total > 0 else 0.0
+
+    return SkillFrequencyResponse(
+        items=items,
+        processed_canonical_jobs=processed_total,
+        canonical_jobs_total=canonical_total,
+        jobs_with_at_least_one_skill=with_skills,
+        zero_skill_jobs=zero_skills,
+        skill_coverage=coverage,
+        total_unique_skills_observed=unique_skills,
+        limit=limit,
+    )
+
+
+def _parse_skills_array(value: object) -> list[str]:
+    """Safely parse skills_json into a normalized list of canonical skill keys."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(s).strip().casefold() for s in value if s is not None and str(s).strip()]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(s).strip().casefold() for s in parsed if s is not None and str(s).strip()]
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
 
 
 def summarize_skill_frequency(

@@ -193,13 +193,12 @@ function BarLabel(props) {
   );
 }
 
-function ChartTooltip({ active, payload, totalListingsWithKeywords }) {
+function ChartTooltip({ active, payload }) {
   if (!active || !payload || !payload.length) return null;
   const entry = payload[0].payload;
-  const prevalence =
-    totalListingsWithKeywords > 0
-      ? ((entry.count / totalListingsWithKeywords) * 100).toFixed(1)
-      : "0.0";
+  const pct = entry.prevalence != null
+    ? `${(entry.prevalence * 100).toFixed(1)}%`
+    : "—";
 
   return (
     <div
@@ -230,7 +229,7 @@ function ChartTooltip({ active, payload, totalListingsWithKeywords }) {
           fontFamily: "var(--font-geist-sans)",
         }}
       >
-        Appears in {prevalence}% of enriched listings · Rank #{entry.rank}
+        Appears in {pct} of skill-processed listings · Rank #{entry.rank}
       </p>
     </div>
   );
@@ -285,7 +284,7 @@ export default function SkillFrequencyChart() {
   if (loading) return <Shimmer />;
   if (error)
     return (
-      <InsightCard title="Most Requested Skills" description="Skills most frequently mentioned in keyword-enriched job listings.">
+      <InsightCard title="Most Requested Skills" description="Skills most frequently detected across analyzed job listings.">
         <InsightState
           state="error"
           message="Unable to load skill-demand analytics."
@@ -294,10 +293,10 @@ export default function SkillFrequencyChart() {
     );
   if (!data || !data.items || data.items.length === 0) {
     return (
-      <InsightCard title="Most Requested Skills" description="Skills most frequently mentioned in keyword-enriched job listings.">
+      <InsightCard title="Most Requested Skills" description="Skills most frequently detected across analyzed job listings.">
         <InsightState
           state="empty"
-          message="No skill data is available for the current dataset. Keyword enrichment must be completed before skill-demand insights can be calculated."
+          message="No skill extraction data is available yet. Run the skill extraction backfill to populate results."
         />
       </InsightCard>
     );
@@ -307,34 +306,43 @@ export default function SkillFrequencyChart() {
   const sliced = data.items.slice(0, visibleCount);
 
   const chartData = sliced.map((item, i) => {
-    const canonical = normalizeSkill(item.keyword);
+    const canonical = normalizeSkill(item.skill);
     return {
       name: skillLabel(canonical),
       canonical,
-      count: item.rows,
+      count: item.job_count,
+      prevalence: item.prevalence,
       rank: i + 1,
       iconSlug: getSkillIcon(canonical),
     };
   });
 
-  const totalKeywords = data.total_unique_keywords ?? data.items.length;
-  const enrichedListings = data.total_listings_with_keywords ?? 0;
-  const coveragePct = data.keyword_coverage_pct ?? 0;
+  const totalSkills = data.total_unique_skills_observed ?? data.items.length;
+  const processedJobs = data.processed_canonical_jobs ?? 0;
+  const coveragePct = data.skill_coverage != null
+    ? Math.round(data.skill_coverage * 100)
+    : 0;
+  const withSkills = data.jobs_with_at_least_one_skill ?? 0;
 
   const evidenceItems = [
     {
-      label: `Top ${visibleCount} of ${totalKeywords} skills`,
+      label: `Top ${visibleCount} of ${totalSkills} observed skills`,
       value: null,
       variant: "neutral",
     },
     {
-      label: "Keyword-enriched listings",
-      value: formatCount(enrichedListings),
+      label: "Skill-processed listings",
+      value: formatCount(processedJobs),
       variant: "neutral",
     },
     {
-      label: "Keyword coverage",
+      label: `Skill coverage`,
       value: `${coveragePct}%`,
+      variant: "neutral",
+    },
+    {
+      label: "Listings with skills",
+      value: formatCount(withSkills),
       variant: "neutral",
     },
   ];
@@ -380,11 +388,7 @@ export default function SkillFrequencyChart() {
               tickLine={false}
             />
             <Tooltip
-              content={
-                <ChartTooltip
-                  totalListingsWithKeywords={enrichedListings}
-                />
-              }
+              content={<ChartTooltip />}
               cursor={{ fill: "#F4F2EF" }}
             />
             <Bar
