@@ -128,54 +128,55 @@ function axisTick(v) {
   return String(v);
 }
 
+// Y-axis area width reserved for rank + icon + label.
+const YAXIS_WIDTH = 150;
+
 function YAxisTick(props) {
   const { x, y, payload } = props;
 
-  // DEBUG: log one tick to inspect actual payload shape
-  if (payload?.rank === 1 && typeof window !== "undefined") {
-    console.log("YAxisTick payload shape:", JSON.stringify(payload, null, 2));
-  }
-
-  // Recharts may overwrite `payload.name` with the dataKey string "name".
-  // Use `payload.label` (our own key, never clobbered) or fall back to
-  // `payload.value` (explicitly set by Recharts to the dataKey category value).
+  // Use our safe `label` key (see chartData) to avoid Recharts clobbering
+  // payload.name with the SVG presentation attribute.
   const label = payload?.label || payload?.value || "";
 
-  // Icon is optional; never render an empty white placeholder rect.
   const iconSlug = payload?.iconSlug;
   const Icon = iconSlug ? SKILL_ICONS[iconSlug] : null;
   const rank = payload?.rank;
   const rankText = rank != null ? String(rank).padStart(2, "0") : "";
 
+  // The Recharts tick x-coordinate is the boundary between the Y-axis area
+  // and the plot area.  All elements must be placed to the LEFT of this
+  // boundary (negative offsets) so they never overlap the bars.
+  const boundary = x;
+
   return (
-    <g transform={`translate(${x},${y})`}>
-      {/* Rank number — always visible */}
+    <g>
+      {/* Rank number — far left of the Y-axis area */}
       <text
-        x={-8}
+        x={boundary - YAXIS_WIDTH + 4}
         y={0}
         dy={4}
-        textAnchor="end"
+        textAnchor="start"
         fill="var(--hirenovik-analytics-ink-secondary)"
         fontSize={12}
         style={{ fontFamily: "var(--font-geist-mono)" }}
       >
         {rankText}
       </text>
-      {/* Icon — only when a known mapping exists */}
+      {/* Icon — only when a known mapping exists; no empty placeholder */}
       {Icon && (
         <g
-          transform="translate(0, -8)"
+          transform={`translate(${boundary - YAXIS_WIDTH + 30}, -8)`}
           color="var(--hirenovik-analytics-ink-secondary)"
         >
           <Icon size={16} color="currentColor" aria-hidden="true" />
         </g>
       )}
-      {/* Skill label — always visible */}
+      {/* Skill label — right-aligned just before the plot boundary */}
       <text
-        x={Icon ? 20 : 2}
+        x={boundary - 8}
         y={0}
         dy={4}
-        textAnchor="start"
+        textAnchor="end"
         fill="#18181B"
         fontSize={13}
         style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
@@ -383,7 +384,7 @@ export default function SkillFrequencyChart() {
           <BarChart
             data={chartData}
             layout="vertical"
-            margin={{ top: 4, right: 170, left: 120, bottom: 4 }}
+            margin={{ top: 4, right: 170, left: YAXIS_WIDTH, bottom: 4 }}
           >
             <CartesianGrid
               horizontal={false}
@@ -403,7 +404,7 @@ export default function SkillFrequencyChart() {
               dataKey="name"
               type="category"
               tick={(props) => <YAxisTick {...props} />}
-              width={120}
+              width={YAXIS_WIDTH}
               interval={0}
               axisLine={false}
               tickLine={false}
