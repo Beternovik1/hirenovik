@@ -242,6 +242,7 @@ class DescriptionPreparer:
                         break
 
                     metrics.scanned += len(rows)
+                    batch_prepared: list[int] = []
 
                     for job in rows:
                         if limit is not None and metrics.prepared >= limit:
@@ -257,7 +258,6 @@ class DescriptionPreparer:
                             metrics.already_prepared += 1
                             continue
 
-                        # Pre-clean validation
                         if not is_usable(raw, self.min_raw_length):
                             metrics.rejected_before_clean += 1
                             if raw and is_placeholder(raw):
@@ -273,7 +273,6 @@ class DescriptionPreparer:
                             metrics.failed += 1
                             continue
 
-                        # Post-clean validation
                         if not cleaned or len(cleaned.strip()) < self.min_cleaned_length:
                             metrics.rejected_after_clean += 1
                             continue
@@ -284,16 +283,18 @@ class DescriptionPreparer:
                         metrics.prepared += 1
                         metrics.raw_lengths.append(len(raw or ""))
                         metrics.cleaned_lengths.append(len(cleaned))
-                        if manifest is not None and not dry_run:
-                            manifest.add_batch([job.id])
+                        batch_prepared.append(job.id)
 
                     if not dry_run:
                         try:
                             session.commit()
+                            # Manifest recorded AFTER successful commit
+                            if manifest is not None and batch_prepared:
+                                manifest.add_batch(batch_prepared)
                         except Exception:
                             session.rollback()
                             logger.exception("Batch commit failed; rolling back")
-                            metrics.failed += len(rows)  # conservative
+                            metrics.failed += len(batch_prepared)
                             raise
 
                     cursor = rows[-1].id
