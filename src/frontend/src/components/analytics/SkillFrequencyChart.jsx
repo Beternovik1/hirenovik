@@ -129,11 +129,10 @@ function axisTick(v) {
 }
 
 // Y-axis area width reserved for rank + icon + label.
-const YAXIS_WIDTH = 160;
+// Must accommodate: rank (monospace digits) + icon gap + optional 16px icon + gap + label.
+const YAXIS_WIDTH = 180;
 
 function YAxisTick({ x, y, payload }) {
-  // Use our safe `label` key (see chartData) to avoid Recharts clobbering
-  // payload.name with the SVG presentation attribute.
   const label = payload?.label || payload?.value || "";
 
   const iconSlug = payload?.iconSlug;
@@ -141,28 +140,32 @@ function YAxisTick({ x, y, payload }) {
   const rank = payload?.rank;
   const rankText = rank != null ? String(rank).padStart(2, "0") : "";
 
-  // All child coordinates are relative to (x, y).
-  // x is the boundary between Y-axis area and plot area.
-  // Negative x → left (into Y-axis area).  Positive x → right (into bars).
-  // y is the vertical centre of the bar row.
+  // Coordinates are relative to (x, y) which Recharts passes.
+  // x is the LEFT edge of the Y-axis area.
+  // Positive x values move right within the Y-axis area toward the plot boundary.
+  // The plot boundary is at approximately x = YAXIS_WIDTH.
+  const rankX = 2;
+  const iconX = rankX + 28; // rank ~22px wide + gap
+  const labelX = YAXIS_WIDTH - 8;
+
   return (
     <g transform={`translate(${x},${y})`}>
-      {/* Rank number — far left */}
+      {/* Rank number — subtle secondary text */}
       <text
-        x={-YAXIS_WIDTH + 4}
+        x={rankX}
         y={0}
         textAnchor="start"
         dominantBaseline="central"
         fill="var(--hirenovik-analytics-ink-secondary)"
-        fontSize={12}
+        fontSize={11}
         style={{ fontFamily: "var(--font-geist-mono)" }}
       >
         {rankText}
       </text>
-      {/* Icon — only when a known mapping exists; no empty placeholder */}
+      {/* Icon — real Simple Icons SVG, only when a known mapping exists */}
       {Icon && (
         <g
-          transform={`translate(${-YAXIS_WIDTH + 30}, -8)`}
+          transform={`translate(${iconX}, -8)`}
           color="var(--hirenovik-analytics-ink-secondary)"
         >
           <Icon size={16} color="currentColor" aria-hidden="true" />
@@ -170,7 +173,7 @@ function YAxisTick({ x, y, payload }) {
       )}
       {/* Skill label — right-aligned, 8px gap before the bar */}
       <text
-        x={-8}
+        x={labelX}
         y={0}
         textAnchor="end"
         dominantBaseline="central"
