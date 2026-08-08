@@ -43,7 +43,7 @@ _MARKDOWN_ITALIC_PATTERN = re.compile(r"\*(.+?)\*|_(.+?)_")
 _MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _MARKDOWN_LIST_PATTERN = re.compile(r"^\s*[-*+]\s+", re.MULTILINE)
 _BULLET_PATTERN = re.compile(r"[\u2022\u2023\u25e6\u2043\u204c\uf0b7]")
-_SPECIAL_CHARS_PATTERN = re.compile(r"[^\w\s,.;:()\-/+\u00C0-\u017F\u00C0-\u00FF]")
+_SPECIAL_CHARS_PATTERN = re.compile(r"[^\w\s,.;:()\-/+#\u00C0-\u017F\u00C0-\u00FF]")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
 
 #: Recruiter noise and HTML artifacts that survive BS4 (applied after URLs,
