@@ -129,11 +129,9 @@ function axisTick(v) {
 }
 
 // Y-axis area width reserved for rank + icon + label.
-const YAXIS_WIDTH = 150;
+const YAXIS_WIDTH = 160;
 
-function YAxisTick(props) {
-  const { x, y, payload } = props;
-
+function YAxisTick({ x, y, payload }) {
   // Use our safe `label` key (see chartData) to avoid Recharts clobbering
   // payload.name with the SVG presentation attribute.
   const label = payload?.label || payload?.value || "";
@@ -143,19 +141,18 @@ function YAxisTick(props) {
   const rank = payload?.rank;
   const rankText = rank != null ? String(rank).padStart(2, "0") : "";
 
-  // The Recharts tick x-coordinate is the boundary between the Y-axis area
-  // and the plot area.  All elements must be placed to the LEFT of this
-  // boundary (negative offsets) so they never overlap the bars.
-  const boundary = x;
-
+  // All child coordinates are relative to (x, y).
+  // x is the boundary between Y-axis area and plot area.
+  // Negative x → left (into Y-axis area).  Positive x → right (into bars).
+  // y is the vertical centre of the bar row.
   return (
-    <g>
-      {/* Rank number — far left of the Y-axis area */}
+    <g transform={`translate(${x},${y})`}>
+      {/* Rank number — far left */}
       <text
-        x={boundary - YAXIS_WIDTH + 4}
+        x={-YAXIS_WIDTH + 4}
         y={0}
-        dy={4}
         textAnchor="start"
+        dominantBaseline="central"
         fill="var(--hirenovik-analytics-ink-secondary)"
         fontSize={12}
         style={{ fontFamily: "var(--font-geist-mono)" }}
@@ -165,18 +162,18 @@ function YAxisTick(props) {
       {/* Icon — only when a known mapping exists; no empty placeholder */}
       {Icon && (
         <g
-          transform={`translate(${boundary - YAXIS_WIDTH + 30}, -8)`}
+          transform={`translate(${-YAXIS_WIDTH + 30}, -8)`}
           color="var(--hirenovik-analytics-ink-secondary)"
         >
           <Icon size={16} color="currentColor" aria-hidden="true" />
         </g>
       )}
-      {/* Skill label — right-aligned just before the plot boundary */}
+      {/* Skill label — right-aligned, 8px gap before the bar */}
       <text
-        x={boundary - 8}
+        x={-8}
         y={0}
-        dy={4}
         textAnchor="end"
+        dominantBaseline="central"
         fill="#18181B"
         fontSize={13}
         style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
@@ -384,7 +381,7 @@ export default function SkillFrequencyChart() {
           <BarChart
             data={chartData}
             layout="vertical"
-            margin={{ top: 4, right: 170, left: YAXIS_WIDTH, bottom: 4 }}
+            margin={{ top: 4, right: 170, left: YAXIS_WIDTH + 16, bottom: 4 }}
           >
             <CartesianGrid
               horizontal={false}
