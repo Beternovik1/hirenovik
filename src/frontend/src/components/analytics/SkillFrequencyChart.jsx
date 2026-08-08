@@ -87,15 +87,19 @@ function formatCount(n) {
 }
 
 function SkillRowIcon({ slug }) {
-  const Icon = SKILL_ICONS[slug];
-  if (!Icon) return null; // no placeholder — just empty cell
+  const icon = SKILL_ICONS[slug];
+  if (!icon) return null; // no placeholder — just empty cell
   return (
-    <Icon
-      size={16}
-      color="currentColor"
+    <svg
+      viewBox="0 0 24 24"
+      width={16}
+      height={16}
+      fill="currentColor"
       aria-hidden="true"
       style={{ display: "block", flexShrink: 0, color: "#52525B" }}
-    />
+    >
+      <path d={icon.path} />
+    </svg>
   );
 }
 
