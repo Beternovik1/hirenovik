@@ -130,9 +130,10 @@ function axisTick(v) {
 
 function YAxisTick(props) {
   const { x, y, payload } = props;
-  const { rank, iconSlug } = payload || {};
+  const { rank, iconSlug, name } = payload || {};
   const rankText = rank != null ? String(rank).padStart(2, "0") : "";
   const Icon = iconSlug ? SKILL_ICONS[iconSlug] : null;
+  const label = name || "";
 
   return (
     <g transform={`translate(${x},${y})`}>
@@ -164,12 +165,24 @@ function YAxisTick(props) {
           fill="var(--hirenovik-analytics-surface-alt)"
         />
       )}
+      <text
+        x={44}
+        y={0}
+        dy={4}
+        textAnchor="start"
+        fill="var(--hirenovik-analytics-ink)"
+        fontSize={13}
+        style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
+      >
+        {label}
+      </text>
     </g>
   );
 }
 
 function BarLabel(props) {
-  const { x, y, width, value, name } = props;
+  const { x, y, width, value, payload } = props;
+  const displayName = payload?.name || "";
   if (value == null) return null;
   return (
     <text
@@ -179,7 +192,7 @@ function BarLabel(props) {
       fontSize={12}
       style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
     >
-      <tspan style={{ fontFamily: "var(--font-geist-sans)" }}>{name}</tspan>
+      <tspan style={{ fontFamily: "var(--font-geist-sans)" }}>{displayName}</tspan>
       <tspan fill="var(--hirenovik-analytics-ink-secondary)" dx={4}>
         ·
       </tspan>
@@ -239,7 +252,7 @@ function Shimmer() {
   return (
     <InsightCard
       title="Most Requested Skills"
-      description="Skills most frequently mentioned in keyword-enriched job listings."
+      description="Skills most frequently detected across analyzed job listings."
     >
       <div className="mt-4 space-y-3 animate-pulse">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -355,14 +368,14 @@ export default function SkillFrequencyChart() {
     <div>
       <InsightCard
         title="Most Requested Skills"
-        description="Skills most frequently mentioned in keyword-enriched job listings."
+        description="Skills most frequently detected across analyzed job listings."
         evidence={evidenceItems}
       >
         <ResponsiveContainer width="100%" height={chartHeight}>
           <BarChart
             data={chartData}
             layout="vertical"
-            margin={{ top: 4, right: 170, left: 50, bottom: 4 }}
+            margin={{ top: 4, right: 170, left: 120, bottom: 4 }}
           >
             <CartesianGrid
               horizontal={false}
@@ -382,7 +395,7 @@ export default function SkillFrequencyChart() {
               dataKey="name"
               type="category"
               tick={(props) => <YAxisTick {...props} />}
-              width={44}
+              width={120}
               interval={0}
               axisLine={false}
               tickLine={false}
