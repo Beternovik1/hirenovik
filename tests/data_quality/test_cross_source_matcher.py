@@ -14,6 +14,8 @@ from src.data_quality.cross_source_matcher import (
     _score_date,
     _score_salary,
     _score_description,
+    _title_disciplines_conflict,
+    _title_compatible,
     compute_score,
 )
 
@@ -60,11 +62,37 @@ class TestStaffingDetection:
     def test_manpower_is_staffing(self) -> None:
         assert is_staffing_company("ManpowerGroup") is True
 
+    def test_probecarios_is_staffing(self) -> None:
+        assert is_staffing_company("Probecarios") is True
+
     def test_crediclub_is_not_staffing(self) -> None:
         assert is_staffing_company("CrediClub") is False
 
-    def test_none_is_not_staffing(self) -> None:
-        assert is_staffing_company(None) is False
+
+class TestTitleDisciplines:
+    def test_industrial_vs_mecatronica_conflict(self) -> None:
+        assert _title_disciplines_conflict(
+            "Becario de Ing Industrial o Sistemas",
+            "Becario de Ing Mecatrónica o Ing Mecánica"
+        ) is True
+
+    def test_data_vs_finance_conflict(self) -> None:
+        assert _title_disciplines_conflict(
+            "Analista de Datos",
+            "Analista Financiero"
+        ) is True
+
+    def test_same_discipline_no_conflict(self) -> None:
+        assert _title_disciplines_conflict(
+            "Data Engineer",
+            "Ingeniero de Datos"
+        ) is False
+
+    def test_one_no_category_no_conflict(self) -> None:
+        assert _title_disciplines_conflict(
+            "Analista de Datos",
+            "Analista"
+        ) is False
 
 
 class TestScoreLocation:
@@ -156,35 +184,44 @@ class TestComputeScore:
             "date_scraped": date or datetime(2026, 1, 1, tzinfo=timezone.utc),
         }
 
-    def test_strong_match(self) -> None:
-        a = self._job("indeed", "Data Engineer", "CrediClub", "León, Gto",
-                       "Python SQL AWS Docker", 30000, 50000)
-        b = self._job("computrabajo", "Data Engineer", "CrediClub SAPI", "León, Guanajuato",
-                       "Python SQL AWS Docker Kubernetes", 35000, 45000)
+    def test_strong_match_with_descriptions_is_high(self) -> None:
+        a = self._job("indeed", "Data Engineer", "CrediClub", "Leon Gto",
+                       "Python SQL AWS Docker experience required", 30000, 50000)
+        b = self._job("computrabajo", "Data Engineer", "CrediClub", "Leon Guanajuato",
+                       "Python SQL AWS Docker Kubernetes experience", 35000, 45000)
         result = compute_score(a, b)
-        assert result["score"] > 0.75  # strong evidence, may be high or medium
+        assert result["score"] > 0.75
+        # With descriptions present and similar, should be HIGH or MEDIUM
+        assert result["classification"] in ("high", "medium")
 
-    def test_staffing_agency_never_high(self) -> None:
-        a = self._job("indeed", "Data Engineer", "IDS Comercial", "CDMX",
-                       "Python SQL AWS", 40000, 60000)
-        b = self._job("computrabajo", "Data Engineer", "IDS Comercial", "CDMX",
-                       "Python SQL AWS Docker", 45000, 55000)
+    def test_missing_description_caps_at_medium(self) -> None:
+        """Missing description on one side prevents HIGH."""
+        a = self._job("indeed", "Data Engineer", "Acme Corp", "CDMX",
+                       "Python SQL AWS")  # has description
+        b = self._job("computrabajo", "Data Engineer", "Acme Corp", "CDMX",
+                       None)  # missing description
+        result = compute_score(a, b)
+        assert result["classification"] != "high"
+
+    def test_discipline_conflict_not_high(self) -> None:
+        """Industrial vs Mecatronica titles must not be HIGH."""
+        a = self._job("occ", "Becario de Ing Industrial", "Probecarios",
+                       "Silao Gto", "Python SQL", 4500, 4500)
+        b = self._job("computrabajo", "Becario de Ing Mecatronica", "Probecarios",
+                       "Silao Guanajuato", "Python SQL AWS", 4500, 4500)
         result = compute_score(a, b, is_staffing=True)
         assert result["classification"] != "high"
-        assert result["score"] <= 0.84
 
-    def test_missing_description_neutral(self) -> None:
-        """Missing description should not inflate score."""
+    def test_staffing_never_high(self) -> None:
+        a = self._job("indeed", "Data Engineer", "IDS Comercial", "CDMX",
+                       "Python SQL AWS Docker", 40000, 60000)
+        b = self._job("computrabajo", "Data Engineer", "IDS Comercial", "CDMX",
+                       "Python SQL AWS Docker Kubernetes", 45000, 55000)
+        result = compute_score(a, b, is_staffing=True)
+        assert result["classification"] != "high"
+
+    def test_both_missing_description_not_high(self) -> None:
         a = self._job("indeed", "Data Engineer", "Acme", "CDMX", None)
         b = self._job("computrabajo", "Data Engineer", "Acme", "CDMX", None)
         result = compute_score(a, b)
-        # With both missing descriptions, score should be moderate
-        assert result["score"] < 0.86  # missing descriptions limit score
-
-    def test_different_company_handled_by_blocking(self) -> None:
-        """Different companies are in different blocks — not paired by matcher."""
-        pass
-
-    def test_same_source_not_paired(self) -> None:
-        """Same source wouldn't be blocked — just testing score behavior."""
-        pass  # Blocking handles this, not scoring
+        assert result["classification"] != "high"

@@ -47,7 +47,45 @@ _STAFFING_COMPANIES: frozenset[str] = frozenset({
     "manpowergroup", "manpower group", "manpower",
     "kelly services",
     "adecco",
+    "probecarios",
 })
+
+# ---------------------------------------------------------------------------
+# Thresholds — centralized and named
+# ---------------------------------------------------------------------------
+
+HIGH_SCORE_THRESHOLD = 0.85
+MEDIUM_SCORE_THRESHOLD = 0.50
+HIGH_DESC_SIMILARITY_MIN = 0.5       # description Jaccard must be >= this
+HIGH_TITLE_COMPATIBILITY_MIN = 0.4   # title token overlap
+HIGH_LOCATION_MIN = 0.5
+HIGH_DATE_MIN = 0.3
+MAX_HIGH_DATE_GAP_DAYS = 90
+
+# Discipline/role tokens that indicate different specializations.
+# If both titles contain tokens from DIFFERENT categories, downgrade.
+_CONFLICTING_CATEGORIES: list[set[str]] = [
+    {"industrial", "manufactura", "manufacturing", "produccion", "producción",
+     "production", "calidad", "quality", "procesos", "process", "logistica",
+     "logística", "logistics", "supply", "cadena", "operaciones", "operations"},
+    {"mecatronica", "mecatrónica", "mecatronic", "mecanica", "mecánica",
+     "mechanical", "electrica", "eléctrica", "electrical", "electronica",
+     "electrónica", "electronic"},
+    {"civil", "construccion", "construcción", "construction"},
+    {"quimica", "química", "chemical", "quimico", "químico"},
+    {"software", "desarrollador", "developer", "programacion", "programación",
+     "programming", "fullstack", "full stack", "backend", "frontend", "web"},
+    {"datos", "data", "analytics", "analitica", "analítica", "bi",
+     "business intelligence", "machine learning", "ia", "ai",
+     "inteligencia artificial", "inteligencia"},
+    {"finanzas", "finance", "financial", "contabilidad", "accounting",
+     "contable", "fiscal", "tesoreria", "tesorería", "financiero", "financiera"},
+    {"recursos humanos", "rh", "hr", "human resources", "nomina", "nómina",
+     "payroll", "reclutamiento", "talento", "talent"},
+    {"marketing", "mercadotecnia", "ventas", "sales", "comercial"},
+    {"medico", "médico", "medical", "enfermeria", "enfermería", "nursing",
+     "farmaceutico", "farmacéutico", "pharma"},
+]
 
 
 def normalize(text: Optional[str]) -> str:
@@ -94,7 +132,47 @@ def location_city(text: Optional[str]) -> str:
     return meaningful[0] if meaningful else (parts[0] if parts else "")
 
 
+def _title_token_overlap(title_a: str, title_b: str) -> float:
+    """Token Jaccard overlap between normalized titles."""
+    ta = set(normalize(title_a).split())
+    tb = set(normalize(title_b).split())
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def _title_disciplines_conflict(title_a: str, title_b: str) -> bool:
+    """Return True if titles contain tokens from different discipline categories."""
+    ta = set(normalize(title_a).split())
+    tb = set(normalize(title_b).split())
+    if not ta or not tb:
+        return False
+
+    cat_a = None
+    cat_b = None
+    for i, cat in enumerate(_CONFLICTING_CATEGORIES):
+        if ta & cat:
+            if cat_a is None:
+                cat_a = i
+        if tb & cat:
+            if cat_b is None:
+                cat_b = i
+
+    # Conflict only if BOTH titles land in DIFFERENT specific categories
+    return cat_a is not None and cat_b is not None and cat_a != cat_b
+
+
+def _title_compatible(title_a: str, title_b: str) -> bool:
+    """True if titles are compatible (not conflicting disciplines)."""
+    if _title_disciplines_conflict(title_a, title_b):
+        return False
+    return _title_token_overlap(title_a, title_b) >= HIGH_TITLE_COMPATIBILITY_MIN
+
+
 def is_staffing_company(company: Optional[str]) -> bool:
+    """Return True if company is a known staffing/recruiting agency."""
+    norm = normalize_company(company)
+    return norm in _STAFFING_COMPANIES
     """Return True if company is a known staffing/recruiting agency."""
     norm = normalize_company(company)
     return norm in _STAFFING_COMPANIES
@@ -224,21 +302,50 @@ def compute_score(
 
     score = sum(weights[k] * components[k] for k in weights if components[k] >= 0)
 
-    # Staffing-agency penalty: require higher bar
+    # Staffing-agency penalty
     if is_staffing:
-        score = min(score, 0.84)  # can never reach HIGH
+        score = min(score, HIGH_SCORE_THRESHOLD - 0.01)
 
+    # Guard-based classification
     classification = "low"
-    if score >= 0.85:
-        # Additional guardrails for HIGH
-        if loc < 0.5:
-            classification = "medium"
-        elif date < 0.3:
-            classification = "medium"
-        else:
-            classification = "high"
-    elif score >= 0.50:
+
+    if score >= MEDIUM_SCORE_THRESHOLD:
         classification = "medium"
+
+    if score >= HIGH_SCORE_THRESHOLD:
+        # HIGH requires ALL guards to pass
+        guards_pass = True
+        guard_reasons = []
+
+        # Guard 1: Description on both sides
+        if desc < 0:
+            guards_pass = False
+            guard_reasons.append("description_missing")
+
+        # Guard 2: Description similarity sufficient
+        elif desc < HIGH_DESC_SIMILARITY_MIN:
+            guards_pass = False
+            guard_reasons.append(f"description_similarity({desc:.2f}) < {HIGH_DESC_SIMILARITY_MIN}")
+
+        # Guard 3: Location compatible
+        if loc < HIGH_LOCATION_MIN:
+            guards_pass = False
+            guard_reasons.append(f"location({loc:.2f}) < {HIGH_LOCATION_MIN}")
+
+        # Guard 4: Date proximity
+        if date < HIGH_DATE_MIN:
+            guards_pass = False
+            guard_reasons.append(f"date({date:.2f}) < {HIGH_DATE_MIN}")
+
+        # Guard 5: Title compatible (no conflicting disciplines)
+        title_ok = _title_compatible(job_a["title"], job_b["title"])
+        if not title_ok:
+            guards_pass = False
+            guard_reasons.append("title_conflict")
+
+        if guards_pass:
+            classification = "high"
+        # else stays at medium (score >= 0.85 but guard failed)
 
     return {
         "score": round(score, 3),
