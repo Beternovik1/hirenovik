@@ -119,6 +119,16 @@ const ICON_MAP = {
   "kotlin": "siKotlin",
   "scala": "siScala",
   "r": "siR",
+  // Newly mapped
+  "spring": "siSpring",
+  "angular": "siAngular",
+  "dotnet": "siDotnet",
+  "linux": "siLinux",
+  "html_css": "html_css",
+  "databricks": "siDatabricks",
+  "bigquery": "siGooglebigquery",
+  "sap": "siSap",
+  "jira": "siJira",
 };
 
 export function normalizeSkill(raw) {

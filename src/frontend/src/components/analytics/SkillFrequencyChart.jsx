@@ -36,13 +36,24 @@ import {
   siKotlin,
   siScala,
   siR,
+  siSpring,
+  siAngular,
+  siDotnet,
+  siLinux,
+  siHtml5,
+  siCss3,
+  siDatabricks,
+  siGooglebigquery,
+  siSap,
+  siJira,
 } from "simple-icons";
 import InsightCard from "./InsightCard";
 import InsightState from "./InsightState";
 
 // ---------------------------------------------------------------------------
-// Icon map — real Simple Icons SVGs keyed by the iconSlug from skills.js
-// ---------------------------------------------------------------------------
+// Icon map — real Simple Icons objects keyed by the iconSlug from skills.js.
+// Each value is a Simple Icons object: { path, hex, title, slug }.
+// Special key "html_css" maps to an array [siHtml5, siCss3] for dual-icon rendering.
 const SKILL_ICONS = {
   siPython,
   siJavascript,
@@ -76,33 +87,53 @@ const SKILL_ICONS = {
   siKotlin,
   siScala,
   siR,
+  siSpring,
+  siAngular,
+  siDotnet,
+  siLinux,
+  siDatabricks,
+  siGooglebigquery,
+  siSap,
+  siJira,
+  // HTML/CSS gets two logos in one cell
+  html_css: [siHtml5, siCss3],
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function formatCount(n) {
-  if (n == null) return "\u2014";
-  return Number(n).toLocaleString("en-US");
-}
-
-function SkillRowIcon({ slug }) {
-  const icon = SKILL_ICONS[slug];
-  if (!icon) return null; // no placeholder — just empty cell
+/** Render a single Simple Icons object as an SVG <path> in its brand colour. */
+function IconSvg({ icon, size = 16 }) {
   return (
     <svg
       viewBox="0 0 24 24"
-      width={16}
-      height={16}
-      fill="currentColor"
+      width={size}
+      height={size}
       aria-hidden="true"
-      style={{ display: "block", flexShrink: 0, color: "#52525B" }}
+      style={{ display: "block", flexShrink: 0 }}
     >
-      <path d={icon.path} />
+      <path d={icon.path} fill={`#${icon.hex}`} />
     </svg>
   );
 }
 
+function SkillRowIcon({ slug }) {
+  const entry = SKILL_ICONS[slug];
+  if (!entry) return null;
+
+  // Dual icons for HTML/CSS
+  if (Array.isArray(entry)) {
+    return (
+      <span style={{ display: "flex", gap: 2, alignItems: "center" }}>
+        {entry.map((icon) => (
+          <IconSvg key={icon.slug} icon={icon} size={14} />
+        ))}
+      </span>
+    );
+  }
+
+  return <IconSvg icon={entry} size={16} />;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
 // ---------------------------------------------------------------------------
 // Shimmer / loading state
 // ---------------------------------------------------------------------------
