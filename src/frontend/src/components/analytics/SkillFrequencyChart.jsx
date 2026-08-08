@@ -130,15 +130,28 @@ function axisTick(v) {
 
 function YAxisTick(props) {
   const { x, y, payload } = props;
-  const { rank, iconSlug, name } = payload || {};
-  const rankText = rank != null ? String(rank).padStart(2, "0") : "";
+
+  // DEBUG: log one tick to inspect actual payload shape
+  if (payload?.rank === 1 && typeof window !== "undefined") {
+    console.log("YAxisTick payload shape:", JSON.stringify(payload, null, 2));
+  }
+
+  // Recharts may overwrite `payload.name` with the dataKey string "name".
+  // Use `payload.label` (our own key, never clobbered) or fall back to
+  // `payload.value` (explicitly set by Recharts to the dataKey category value).
+  const label = payload?.label || payload?.value || "";
+
+  // Icon is optional; never render an empty white placeholder rect.
+  const iconSlug = payload?.iconSlug;
   const Icon = iconSlug ? SKILL_ICONS[iconSlug] : null;
-  const label = name || "";
+  const rank = payload?.rank;
+  const rankText = rank != null ? String(rank).padStart(2, "0") : "";
 
   return (
     <g transform={`translate(${x},${y})`}>
+      {/* Rank number — always visible */}
       <text
-        x={20}
+        x={-8}
         y={0}
         dy={4}
         textAnchor="end"
@@ -148,29 +161,22 @@ function YAxisTick(props) {
       >
         {rankText}
       </text>
-      {Icon ? (
+      {/* Icon — only when a known mapping exists */}
+      {Icon && (
         <g
-          transform="translate(24, -8)"
+          transform="translate(0, -8)"
           color="var(--hirenovik-analytics-ink-secondary)"
         >
           <Icon size={16} color="currentColor" aria-hidden="true" />
         </g>
-      ) : (
-        <rect
-          x={24}
-          y={-8}
-          width={16}
-          height={16}
-          rx={3}
-          fill="var(--hirenovik-analytics-surface-alt)"
-        />
       )}
+      {/* Skill label — always visible */}
       <text
-        x={44}
+        x={Icon ? 20 : 2}
         y={0}
         dy={4}
         textAnchor="start"
-        fill="var(--hirenovik-analytics-ink)"
+        fill="#18181B"
         fontSize={13}
         style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
       >
@@ -182,7 +188,7 @@ function YAxisTick(props) {
 
 function BarLabel(props) {
   const { x, y, width, value, payload } = props;
-  const displayName = payload?.name || "";
+  const displayName = payload?.label || payload?.name || "";
   if (value == null) return null;
   return (
     <text
@@ -232,7 +238,7 @@ function ChartTooltip({ active, payload }) {
           fontFamily: "var(--font-geist-sans)",
         }}
       >
-        {entry.name} — {formatCount(entry.count)} listings
+        {entry.label || entry.name} — {formatCount(entry.count)} listings
       </p>
       <p
         style={{
@@ -320,8 +326,10 @@ export default function SkillFrequencyChart() {
 
   const chartData = sliced.map((item, i) => {
     const canonical = normalizeSkill(item.skill);
+    const displayLabel = skillLabel(canonical);
     return {
-      name: skillLabel(canonical),
+      name: displayLabel,
+      label: displayLabel,
       canonical,
       count: item.job_count,
       prevalence: item.prevalence,
