@@ -116,7 +116,10 @@ ROLE_BUCKETS = [bucket for bucket, _ in ROLE_BUCKET_RULES] + ["other"]
 
 
 def get_salary_by_role(db: Session) -> SalaryByRoleResponse:
-    """Return role-family salary summaries derived only from the jobs table.
+    """Return role-family salary summaries for canonical/independent jobs.
+
+    Confirmed duplicate observations (both same-source and cross-source) are
+    excluded so that each unique vacancy contributes at most once.
 
     Args:
         db: SQLAlchemy session.
@@ -124,7 +127,16 @@ def get_salary_by_role(db: Session) -> SalaryByRoleResponse:
     Returns:
         ``SalaryByRoleResponse`` with one item for each role-family bucket.
     """
-    rows = db.query(Job.title, Job.salary_min, Job.salary_max).all()
+    dups = (
+        db.query(JobDuplicateLink.duplicate_job_id)
+        .filter(JobDuplicateLink.status == "confirmed")
+        .subquery()
+    )
+    rows = (
+        db.query(Job.title, Job.salary_min, Job.salary_max)
+        .filter(~Job.id.in_(db.query(dups.c.duplicate_job_id)))
+        .all()
+    )
     return summarize_salary_by_role(rows)
 
 
@@ -234,7 +246,11 @@ def _to_float(value: object) -> float:
 
 
 def get_industry_demand(db: Session) -> IndustryDemandResponse:
-    """Return industry demand summaries grouped by niche, career, type, and site.
+    """Return industry demand summaries for canonical/independent jobs.
+
+    Confirmed duplicate observations are excluded.  Cross-source confirmed
+    duplicates are currently negligible (a handful of rows), so excluding
+    them all does not materially affect source-level visibility.
 
     Args:
         db: SQLAlchemy session.
@@ -242,6 +258,11 @@ def get_industry_demand(db: Session) -> IndustryDemandResponse:
     Returns:
         ``IndustryDemandResponse`` with one item per group combination.
     """
+    dups = (
+        db.query(JobDuplicateLink.duplicate_job_id)
+        .filter(JobDuplicateLink.status == "confirmed")
+        .subquery()
+    )
     rows = db.query(
         Job.title,
         Job.salary_min,
@@ -252,7 +273,7 @@ def get_industry_demand(db: Session) -> IndustryDemandResponse:
         Job.site,
         Job.date_scraped,
         Job.date_posted,
-    ).all()
+    ).filter(~Job.id.in_(db.query(dups.c.duplicate_job_id))).all()
     return summarize_industry_demand(rows)
 
 
@@ -515,6 +536,18 @@ def get_skill_frequency(db: Session, limit: int = 30) -> SkillFrequencyResponse:
     unique_skills = len(skill_to_jobs)
     coverage = round(processed_total / canonical_total, 4) if canonical_total > 0 else 0.0
 
+    # Date range for the canonical dataset
+    date_range = (
+        db.query(
+            func.min(Job.date_scraped).label("start"),
+            func.max(Job.date_scraped).label("end"),
+        )
+        .filter(Job.id.in_(canonical.with_entities(Job.id)))
+        .one_or_none()
+    )
+    dataset_start = str(date_range.start.date()) if date_range and date_range.start else None
+    dataset_end = str(date_range.end.date()) if date_range and date_range.end else None
+
     return SkillFrequencyResponse(
         items=items,
         processed_canonical_jobs=processed_total,
@@ -524,6 +557,8 @@ def get_skill_frequency(db: Session, limit: int = 30) -> SkillFrequencyResponse:
         skill_coverage=coverage,
         total_unique_skills_observed=unique_skills,
         limit=limit,
+        dataset_start_date=dataset_start,
+        dataset_end_date=dataset_end,
     )
 
 

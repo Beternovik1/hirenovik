@@ -100,6 +100,8 @@ class SkillFrequencyResponse(BaseModel):
     skill_coverage: float
     total_unique_skills_observed: int
     limit: int
+    dataset_start_date: str | None = None
+    dataset_end_date: str | None = None
 
 
 class TimeTrendItem(BaseModel):
