@@ -135,6 +135,12 @@ function SkillRowIcon({ slug }) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+function formatCount(n) {
+  if (n == null) return "\u2014";
+  return Number(n).toLocaleString("en-US");
+}
+
+
 // Shimmer / loading state
 // ---------------------------------------------------------------------------
 function Shimmer() {
