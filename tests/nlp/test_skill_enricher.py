@@ -11,6 +11,7 @@ from src.database.models import Base, Job
 from src.nlp.skill_enricher import SkillEnricher, EnrichmentMetrics
 from src.nlp.skill_extractor import SkillExtractor, reset_extractor
 from src.nlp.skill_taxonomy import load_taxonomy, reset_taxonomy_cache
+from src.nlp.backfill_manifest import BackfillManifest
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +341,66 @@ class TestRunPagination:
             assert len(job.skills_json) > 0
 
 
-class TestRunFailedRowDoesNotStopBatch:
+class TestManifest:
+    def test_manifest_generates_with_ids(self, session, extractor, version) -> None:
+        job = _make_job(1, "PYTHON DEV", "Python and SQL experience " * 3)
+        session.add(job)
+        session.commit()
+
+        manifest = BackfillManifest(
+            run_type="test", command="test", version=version,
+        )
+        with patch("src.nlp.skill_enricher.db_connect", return_value=session.bind):
+            enricher = SkillEnricher(extractor, version, batch_size=100)
+            enricher.run(dry_run=False, manifest=manifest)
+
+        assert len(manifest.affected_ids) == 1
+        assert manifest.affected_ids[0] == 1
+
+    def test_dry_run_creates_no_manifest(self, session, extractor, version) -> None:
+        job = _make_job(1, "PYTHON DEV", "Python " * 3)
+        session.add(job)
+        session.commit()
+
+        manifest = BackfillManifest(
+            run_type="test", command="test", version=version,
+        )
+        with patch("src.nlp.skill_enricher.db_connect", return_value=session.bind):
+            enricher = SkillEnricher(extractor, version, batch_size=100)
+            enricher.run(dry_run=True, manifest=manifest)
+
+        assert len(manifest.affected_ids) == 0
+
+    def test_partial_batch_failure_manifest_accurate(self, session, extractor, version) -> None:
+        """Batch 1 commits (job 1), batch 2 fails — manifest has only job 1."""
+        j1 = _make_job(1, "A", "Python SQL " * 3)
+        j2 = _make_job(2, "B", "Docker K8s " * 3)
+        session.add_all([j1, j2])
+        session.commit()
+
+        original_commit = Session.commit
+        commit_count = [0]
+
+        def flaky_commit(self_session):
+            commit_count[0] += 1
+            if commit_count[0] == 2:
+                raise RuntimeError("Simulated batch 2 failure")
+            return original_commit(self_session)
+
+        manifest = BackfillManifest(
+            run_type="test", command="test", version=version,
+        )
+        with patch.object(Session, "commit", flaky_commit):
+            with patch("src.nlp.skill_enricher.db_connect", return_value=session.bind):
+                enricher = SkillEnricher(extractor, version, batch_size=1)
+                try:
+                    enricher.run(dry_run=False, manifest=manifest)
+                except RuntimeError:
+                    pass
+
+        # Only job 1 in manifest (batch 1 committed before batch 2 failed)
+        assert 1 in manifest.affected_ids
+        assert 2 not in manifest.affected_ids
     def test_failure_continues(self, session, extractor, version) -> None:
         j1 = _make_job(1, "OK", "Python")
         j2 = _make_job(2, "OK", "SQL")

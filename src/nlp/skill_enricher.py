@@ -193,6 +193,7 @@ class SkillEnricher:
                     metrics.scanned += len(rows)
                     eligible = self._filter_eligible(rows, force)
                     metrics.eligible += len(eligible)
+                    batch_processed: list[int] = []
 
                     for row in eligible:
                         if limit is not None and metrics.processed >= limit:
@@ -208,8 +209,7 @@ class SkillEnricher:
                                 metrics.with_skills += 1
                             else:
                                 metrics.zero_skills += 1
-                            if manifest is not None and not dry_run:
-                                manifest.add_batch([row.id])
+                            batch_processed.append(row.id)
                         except Exception:
                             logger.exception(
                                 "Failed to process job %d; continuing", row.id
@@ -218,6 +218,9 @@ class SkillEnricher:
 
                     if not dry_run:
                         session.commit()
+                        # Manifest recorded AFTER successful commit
+                        if manifest is not None and batch_processed:
+                            manifest.add_batch(batch_processed)
 
                     # Advance cursor to last row in batch
                     cursor = rows[-1].id
@@ -337,6 +340,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source", type=str, default=None,
                    help="Filter by site (indeed, computrabajo, occ)")
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--manifest", action="store_true",
+                   help="Generate a local manifest of affected job IDs")
     return p
 
 
@@ -346,17 +351,30 @@ def main(argv: Optional[list[str]] = None) -> None:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
+    manifest = None
+    if args.manifest and not args.dry_run:
+        manifest = BackfillManifest(
+            run_type="skill_enricher",
+            command=f"python -m src.nlp.skill_enricher --limit {args.limit}",
+            version=load_taxonomy().version,
+            limit=args.limit,
+            source=args.source,
+        )
     enricher = SkillEnricher(batch_size=args.batch_size)
     metrics = enricher.run(
         limit=args.limit,
         dry_run=args.dry_run,
         force=args.force,
         source=args.source,
+        manifest=manifest,
     )
     if args.dry_run:
         print("\n--- DRY RUN COMPLETE — zero rows modified ---")
     else:
         print(f"\n--- {metrics.processed} rows updated ---")
+        if manifest and manifest.affected_ids:
+            path = manifest.save()
+            print(f"Manifest: {path} ({len(manifest.affected_ids)} IDs)")
 
 
 if __name__ == "__main__":
