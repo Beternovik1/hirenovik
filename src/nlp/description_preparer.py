@@ -362,6 +362,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-raw-length", type=int, default=MIN_RAW_LENGTH)
     p.add_argument("--min-cleaned-length", type=int, default=MIN_CLEANED_LENGTH)
     p.add_argument("--verbose", action="store_true")
+    p.add_argument("--manifest", action="store_true",
+                   help="Generate a local manifest of affected job IDs")
     return p
 
 
@@ -376,16 +378,30 @@ def main(argv: Optional[list[str]] = None) -> None:
         min_cleaned_length=args.min_cleaned_length,
         batch_size=args.batch_size,
     )
+    manifest = None
+    if args.manifest and not args.dry_run:
+        manifest = BackfillManifest(
+            run_type="description_preparer",
+            command=f"python -m src.nlp.description_preparer --limit {args.limit}",
+            version="1.0.0",
+            limit=args.limit,
+            source=args.source,
+        )
+
     metrics = preparer.run(
         limit=args.limit,
         dry_run=args.dry_run,
         force=args.force,
         source=args.source,
+        manifest=manifest,
     )
     if args.dry_run:
         print("\n--- DRY RUN COMPLETE — zero rows modified ---")
     else:
         print(f"\n--- {metrics.prepared} rows prepared ---")
+        if manifest and manifest.affected_ids:
+            path = manifest.save()
+            print(f"Manifest: {path} ({len(manifest.affected_ids)} IDs)")
 
 
 if __name__ == "__main__":
