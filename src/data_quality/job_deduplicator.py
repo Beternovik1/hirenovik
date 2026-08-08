@@ -34,8 +34,8 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from src.database.models import JobDuplicateLink, db_connect
-from src.scrapers.computrabajo_scraper import canonicalize_computrabajo_url
 from src.nlp.backfill_manifest import BackfillManifest, DEFAULT_ARTIFACTS_DIR
+from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,20 @@ METHOD_COMPUTRABAJO_URL = "computrabajo_canonical_url"
 
 #: Known statuses.
 STATUS_CONFIRMED = "confirmed"
+
+
+def _canonicalize_url(url: str) -> str:
+    """Remove URL fragment — same logic as canonicalize_computrabajo_url.
+
+    Inlined to avoid importing the full scraper module.
+    """
+    if not isinstance(url, str) or not url.strip():
+        return url if isinstance(url, str) else ""
+    try:
+        parts = urlsplit(url)
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+    except (ValueError, AttributeError):
+        return url
 
 
 # ---------------------------------------------------------------------------
@@ -234,13 +248,23 @@ class JobDeduplicator:
                     canonical = select_canonical(g["rows"])
                     duplicates = [r for r in g["rows"] if r["id"] != canonical["id"]]
 
-                    if not dry_run:
-                        self._persist_links(
-                            session, canonical["id"], duplicates, manifest
-                        )
+                if not dry_run:
+                    self._persist_all(session, groups)
 
                 if not dry_run:
                     session.commit()
+                    # Manifest recorded AFTER successful commit
+                    if manifest is not None:
+                        for g in groups:
+                            if len(g["rows"]) <= 1:
+                                continue
+                            canonical = select_canonical(g["rows"])
+                            for r in g["rows"]:
+                                if r["id"] != canonical["id"]:
+                                    manifest.add_dedup_link(
+                                        r["id"], canonical["id"],
+                                        SCOPE_SAME_SOURCE, METHOD_COMPUTRABAJO_URL, STATUS_CONFIRMED,
+                                    )
 
         finally:
             pass  # engine.dispose() skipped — shared in tests via StaticPool
@@ -280,7 +304,7 @@ class JobDeduplicator:
         """Group rows by canonicalized URL."""
         groups: dict[str, list[dict]] = {}
         for row in rows:
-            canonical = canonicalize_computrabajo_url(row["job_url"] or "")
+            canonical = _canonicalize_url(row["job_url"] or "")
             if canonical not in groups:
                 groups[canonical] = []
             groups[canonical].append(row)
@@ -290,20 +314,80 @@ class JobDeduplicator:
             for url, group_rows in sorted(groups.items())
         ]
 
+    def _persist_all(
+        self,
+        session: Session,
+        groups: list[dict],
+    ) -> None:
+        """Insert all duplicate links in one batched statement."""
+        now = datetime.now(timezone.utc)
+        values: list[dict] = []
+
+        for g in groups:
+            if len(g["rows"]) <= 1:
+                continue
+            canonical = select_canonical(g["rows"])
+            for r in g["rows"]:
+                if r["id"] == canonical["id"]:
+                    continue
+                values.append({
+                    "dup": r["id"],
+                    "canon": canonical["id"],
+                    "scope": SCOPE_SAME_SOURCE,
+                    "method": METHOD_COMPUTRABAJO_URL,
+                    "conf": 1.0,
+                    "status": STATUS_CONFIRMED,
+                    "version": DEDUP_VERSION,
+                    "ts": now,
+                })
+
+        if values:
+            # Build multi-row INSERT in chunks of 500 to avoid
+            # hitting PostgreSQL parameter limits
+            chunk_size = 500
+            for i in range(0, len(values), chunk_size):
+                chunk = values[i:i + chunk_size]
+                placeholders = []
+                params = {}
+                for j, v in enumerate(chunk):
+                    offset = j * 9
+                    placeholders.append(
+                        f"(:dup{offset}, :canon{offset}, :scope{offset}, "
+                        f":method{offset}, :conf{offset}, :status{offset}, "
+                        f":version{offset}, :ts{offset})"
+                    )
+                    params.update({
+                        f"dup{offset}": v["dup"],
+                        f"canon{offset}": v["canon"],
+                        f"scope{offset}": v["scope"],
+                        f"method{offset}": v["method"],
+                        f"conf{offset}": v["conf"],
+                        f"status{offset}": v["status"],
+                        f"version{offset}": v["version"],
+                        f"ts{offset}": v["ts"],
+                    })
+
+                sql = (
+                    "INSERT INTO job_duplicate_links "
+                    "(duplicate_job_id, canonical_job_id, scope, method, "
+                    "confidence, status, dedup_version, created_at) "
+                    "VALUES " + ", ".join(placeholders) + " "
+                    "ON CONFLICT (duplicate_job_id, canonical_job_id, scope) "
+                    "DO NOTHING"
+                )
+                session.execute(text(sql), params)
+
     def _persist_links(
         self,
         session: Session,
         canonical_id: int,
         duplicates: list[dict],
-        manifest: Optional[BackfillManifest],
-    ) -> None:
-        """Insert duplicate links for a group.
-
-        Uses raw SQL to avoid ORM autoincrement issues across dialects.
-        """
+    ) -> int:
+        """Kept for tests — single-group insert. Production uses _persist_all."""
         now = datetime.now(timezone.utc)
+        inserted = 0
         for dup in duplicates:
-            session.execute(
+            result = session.execute(
                 text(
                     """INSERT INTO job_duplicate_links
                        (duplicate_job_id, canonical_job_id, scope, method,
@@ -311,11 +395,7 @@ class JobDeduplicator:
                        VALUES (:dup, :canon, :scope, :method,
                                :conf, :status, :version, :ts)
                        ON CONFLICT (duplicate_job_id, canonical_job_id, scope)
-                       DO UPDATE SET status = EXCLUDED.status,
-                                     dedup_version = EXCLUDED.dedup_version,
-                                     confidence = EXCLUDED.confidence,
-                                     method = EXCLUDED.method,
-                                     created_at = EXCLUDED.created_at"""
+                       DO NOTHING"""
                 ),
                 {
                     "dup": dup["id"],
@@ -328,11 +408,9 @@ class JobDeduplicator:
                     "ts": now,
                 },
             )
-            if manifest:
-                manifest.add_dedup_link(
-                    dup["id"], canonical_id,
-                    SCOPE_SAME_SOURCE, METHOD_COMPUTRABAJO_URL, STATUS_CONFIRMED,
-                )
+            if result.rowcount and result.rowcount > 0:
+                inserted += 1
+        return inserted
 
 
 # ---------------------------------------------------------------------------
