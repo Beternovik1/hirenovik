@@ -52,6 +52,7 @@ from src.database.models import Job, db_connect
 from src.nlp.skill_extractor import SkillExtractor
 from src.nlp.skill_taxonomy import load_taxonomy
 from src.nlp.backfill_manifest import BackfillManifest
+from src.data_quality import confirmed_duplicate_filter
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class EnrichmentMetrics:
     with_skills: int = 0
     zero_skills: int = 0
     skipped: int = 0
+    skipped_confirmed_duplicates: int = 0
     failed: int = 0
     total_skills_assigned: int = 0
     skills_per_listing: list[int] = field(default_factory=list)
@@ -113,6 +115,7 @@ class EnrichmentMetrics:
             f"  With skills: {self.with_skills}",
             f"  Zero skills: {self.zero_skills}",
             f"Skipped (already current): {self.skipped}",
+            f"Skipped (confirmed duplicates): {self.skipped_confirmed_duplicates}",
             f"Failed: {self.failed}",
             f"Total skill assignments: {self.total_skills_assigned}",
             f"Mean / median / max skills: {self.mean_skills:.1f} / {self.median_skills:.0f} / {self.max_skills}",
@@ -227,6 +230,13 @@ class SkillEnricher:
             pass
 
         metrics.end_time = time.perf_counter()
+        # Count confirmed duplicates excluded by query filter
+        dup_count = session.query(Job).filter(
+            ~confirmed_duplicate_filter(Job),
+            Job.cleaned_description.isnot(None),
+            Job.cleaned_description != "",
+        ).count()
+        metrics.skipped_confirmed_duplicates = dup_count
         if dry_run:
             logger.info("DRY RUN — no rows were modified.")
         logger.info("Backfill complete.\n%s", metrics.summary())
@@ -241,6 +251,7 @@ class SkillEnricher:
     ) -> list[Job]:
         """Fetch one batch of rows with descriptions, ordered by id."""
         query = session.query(Job).filter(
+            confirmed_duplicate_filter(Job),
             Job.cleaned_description.isnot(None),
             Job.cleaned_description != "",
             Job.id > cursor,

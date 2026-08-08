@@ -46,6 +46,7 @@ if str(_project_root) not in sys.path:
 from src.database.models import Job, db_connect
 from src.nlp.preprocess import TextPreprocessor
 from src.nlp.backfill_manifest import BackfillManifest
+from src.data_quality import confirmed_duplicate_filter
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ class PreparationMetrics:
     scanned: int = 0
     eligible: int = 0
     already_prepared: int = 0
+    skipped_confirmed_duplicates: int = 0
     rejected_before_clean: int = 0
     rejected_after_clean: int = 0
     prepared: int = 0
@@ -157,6 +159,7 @@ class PreparationMetrics:
             f"Scanned: {self.scanned}",
             f"Eligible: {self.eligible}",
             f"Already prepared: {self.already_prepared}",
+            f"Skipped (confirmed duplicates): {self.skipped_confirmed_duplicates}",
             f"Rejected (pre-clean): {self.rejected_before_clean}",
             f"  Placeholders: {self.placeholder_count}",
             f"Rejected (post-clean): {self.rejected_after_clean}",
@@ -299,6 +302,13 @@ class DescriptionPreparer:
             pass  # engine.dispose() skipped — shared in tests via StaticPool
 
         metrics.end_time = time.perf_counter()
+        # Count confirmed duplicates excluded by query filter
+        dup_count = session.query(Job).filter(
+            ~confirmed_duplicate_filter(Job),
+            Job.description.isnot(None),
+            Job.description != "",
+        ).count()
+        metrics.skipped_confirmed_duplicates = dup_count
         if dry_run:
             logger.info("DRY RUN — no rows were modified.")
         logger.info("Preparation complete.\n%s", metrics.summary())
@@ -308,6 +318,7 @@ class DescriptionPreparer:
         self, session: Session, cursor: int, source: Optional[str]
     ) -> list[Job]:
         query = session.query(Job).filter(
+            confirmed_duplicate_filter(Job),
             Job.description.isnot(None),
             Job.description != "",
             Job.id > cursor,
