@@ -316,24 +316,49 @@ export default function SkillFrequencyChart() {
             const barPct = (row.count / maxCount) * 100;
             const prevalencePct =
               row.prevalence != null
-                ? `${(row.prevalence * 100).toFixed(1)}%`
+                ? (row.prevalence * 100).toFixed(1)
                 : null;
 
             return (
               <div
                 key={row.rank}
+                className="skill-row"
                 style={{
                   display: "flex",
                   alignItems: "center",
                   height: 22,
                   position: "relative",
                 }}
-                title={
-                  prevalencePct
-                    ? `${row.label}: ${formatCount(row.count)} listings · ${prevalencePct} of skill-processed`
-                    : `${row.label}: ${formatCount(row.count)} listings`
-                }
               >
+                {/* --- hover tooltip --- */}
+                <div
+                  className="skill-tooltip"
+                  style={{
+                    display: "none",
+                    position: "absolute",
+                    left: 0,
+                    bottom: "calc(100% + 6px)",
+                    backgroundColor: "#FFFFFF",
+                    border: "1px solid #E6E3DE",
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                    zIndex: 10,
+                    whiteSpace: "nowrap",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#18181B", fontFamily: "var(--font-geist-sans)" }}>
+                    {row.label}
+                  </p>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#71717A", fontFamily: "var(--font-geist-sans)" }}>
+                    Rank #{row.rank} · {formatCount(row.count)} listings
+                    {prevalencePct ? ` · ${prevalencePct}% of skill-processed` : ""}
+                  </p>
+                  <p style={{ margin: "3px 0 0", fontSize: 11, color: "#A1A1AA", fontFamily: "var(--font-geist-sans)" }}>
+                    Based on {formatCount(processedJobs)} processed canonical listings
+                  </p>
+                </div>
                 {/* Rank */}
                 <span
                   style={{
@@ -439,6 +464,12 @@ export default function SkillFrequencyChart() {
             );
           })}
         </div>
+        {/* Hover tooltip behaviour — pure CSS, no JS */}
+        <style>{`
+          .skill-row:hover .skill-tooltip {
+            display: block !important;
+          }
+        `}</style>
       </InsightCard>
 
       {hasExpand && (
