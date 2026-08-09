@@ -5,10 +5,13 @@ from dotenv import load_dotenv
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -58,6 +61,25 @@ class Job(Base):
     description = Column(Text)
     cleaned_description = Column(Text)
     keywords_json = Column(JSONB)
+
+    # Description enrichment provenance (Slice 3.5)
+    # NULL = never enriched; 'raw_description' = cleaned from stored text;
+    # 'detail_page' = fetched from live job-board detail page.
+    description_enrichment_source = Column(String(20))
+
+    # Skill extraction (Slice 2 — canonical skills per listing)
+    # ------------------------------------------------------------------
+    # NULL = not yet processed; [] = processed, no known skills detected;
+    # ["python","sql"] = normal result.
+    # Separate from keywords_json: that column stores BERTopic topic metadata,
+    # not per-listing deterministic skill evidence.
+    skills_json = Column(JSONB)
+    # Taxonomy version at extraction time (e.g. "1.0.0") for version-aware
+    # reprocessing.
+    skill_extractor_version = Column(String(32))
+    # Application-supplied timestamp; NOT a server_default so the caller
+    # controls when extraction was performed.
+    skills_extracted_at = Column(DateTime(timezone=True))
 
     date_posted = Column(String)
 
@@ -141,6 +163,75 @@ class NotificationLog(Base):
             f"<NotificationLog(job_id={self.job_id}, "
             f"profile_name='{self.profile_name}', sent_at='{self.sent_at}')>"
         )
+
+
+class JobDuplicateLink(Base):
+    """Duplicate relationship between two job listings.
+
+    Multiple ``candidate`` relationships are allowed per duplicate job
+    (e.g. a Computrabajo listing may match several OCC candidates).
+    Only one ``confirmed`` canonical relationship is allowed per
+    duplicate job + scope.
+
+    Invariants enforced in schema:
+        - ``duplicate_job_id != canonical_job_id`` (CHECK)
+        - Exact pair uniqueness: ``(dup, canon, scope)``
+        - At most one confirmed per ``(dup, scope)`` (partial unique index)
+    """
+
+    __tablename__ = "job_duplicate_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    duplicate_job_id = Column(
+        BigInteger, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    canonical_job_id = Column(
+        BigInteger, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    scope = Column(String(20), nullable=False)
+    method = Column(String(50), nullable=False)
+    confidence = Column(Float, nullable=False)
+    status = Column(String(20), nullable=False)
+    dedup_version = Column(String(32), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        # Prevent exact duplicate pair rows
+        UniqueConstraint(
+            "duplicate_job_id", "canonical_job_id", "scope",
+            name="uq_duplicate_pair",
+        ),
+        # No self-references
+        CheckConstraint(
+            "duplicate_job_id != canonical_job_id",
+            name="ck_no_self_reference",
+        ),
+        Index(
+            "idx_duplicate_links_canonical",
+            "canonical_job_id", "scope",
+            unique=False,
+        ),
+        Index(
+            "idx_duplicate_links_scope_status",
+            "scope", "status",
+            unique=False,
+        ),
+        # PostgreSQL-only: at most one confirmed per (dup, scope).
+        # Declared as a separate Index below for dialect safety.
+    )
+
+    def __repr__(self):
+        return (
+            f"<JobDuplicateLink(dup={self.duplicate_job_id} -> "
+            f"canon={self.canonical_job_id}, scope={self.scope}, "
+            f"status={self.status})>"
+        )
+
+
+# Partial unique index for confirmed constraint — declared separately
+# because SQLAlchemy's Index does not support postgresql_where in
+# __table_args__ cleanly. The Alembic migration creates it explicitly.
+# SQLite tests use a simplified constraint instead; see conftest._create_partial_unique_index.
 
 
 def db_connect():

@@ -63,6 +63,24 @@ const SKILL_LABELS = {
   "kotlin": "Kotlin",
   "scala": "Scala",
   "r": "R",
+  // Acronym-based skills that need explicit casing
+  "sql": "SQL",
+  "ci_cd": "CI/CD",
+  "rest_api": "REST API",
+  "sql_server": "SQL Server",
+  "html_css": "HTML/CSS",
+  "nosql": "NoSQL",
+  "etl": "ETL",
+  "iot": "IoT",
+  "erp": "ERP",
+  "llm": "LLM",
+  "grc": "GRC",
+  "hvac": "HVAC",
+  "css": "CSS",
+  "dotnet": ".NET",
+  "dynamodb": "DynamoDB",
+  "bigquery": "BigQuery",
+  "sap": "SAP",
 };
 
 const ICON_MAP = {
@@ -101,6 +119,16 @@ const ICON_MAP = {
   "kotlin": "siKotlin",
   "scala": "siScala",
   "r": "siR",
+  // Newly mapped
+  "spring": "siSpring",
+  "angular": "siAngular",
+  "dotnet": "siDotnet",
+  "linux": "siLinux",
+  "html_css": "html_css",
+  "databricks": "siDatabricks",
+  "bigquery": "siGooglebigquery",
+  "sap": "siSap",
+  "jira": "siJira",
 };
 
 export function normalizeSkill(raw) {

@@ -85,6 +85,9 @@ mermaid.txt
 p2.txt
 reporte_pipeline_v2.txt
 
+# Backfill operation artifacts (manifest JSONs, rollback scripts)
+artifacts/
+
 # Personal / school notes
 Practica_final_notas.md
 

@@ -148,8 +148,11 @@ def mock_db_session(app):
     from src.database.models import Base, Job
 
     # Swap JSONB -> JSON so SQLite can create the jobs table.
-    original_type = Job.__table__.c.keywords_json.type
+    # Both keywords_json and skills_json need the same treatment.
+    original_kw_type = Job.__table__.c.keywords_json.type
     Job.__table__.c.keywords_json.type = JSON()
+    original_skills_type = Job.__table__.c.skills_json.type
+    Job.__table__.c.skills_json.type = JSON()
 
     engine = create_engine(
         "sqlite:///:memory:",
@@ -236,5 +239,6 @@ def mock_db_session(app):
     session.close()
     Base.metadata.drop_all(engine)
     engine.dispose()
-    # Restore original JSONB type so other test modules are not affected.
-    Job.__table__.c.keywords_json.type = original_type
+    # Restore original JSONB types so other test modules are not affected.
+    Job.__table__.c.keywords_json.type = original_kw_type
+    Job.__table__.c.skills_json.type = original_skills_type

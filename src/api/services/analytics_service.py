@@ -8,6 +8,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from statistics import median
 
+from sqlalchemy import func, and_, exists
 from sqlalchemy.orm import Session
 
 from src.api.schemas.analytics import (
@@ -22,7 +23,7 @@ from src.api.schemas.analytics import (
     TimeTrendItem,
     TimeTrendResponse,
 )
-from src.database.models import Job
+from src.database.models import Job, JobDuplicateLink
 
 MIN_INTERPRETABLE_LISTINGS = 30
 MIN_INTERPRETABLE_VALID_SALARIES = 10
@@ -115,7 +116,10 @@ ROLE_BUCKETS = [bucket for bucket, _ in ROLE_BUCKET_RULES] + ["other"]
 
 
 def get_salary_by_role(db: Session) -> SalaryByRoleResponse:
-    """Return role-family salary summaries derived only from the jobs table.
+    """Return role-family salary summaries for canonical/independent jobs.
+
+    Confirmed duplicate observations (both same-source and cross-source) are
+    excluded so that each unique vacancy contributes at most once.
 
     Args:
         db: SQLAlchemy session.
@@ -123,7 +127,16 @@ def get_salary_by_role(db: Session) -> SalaryByRoleResponse:
     Returns:
         ``SalaryByRoleResponse`` with one item for each role-family bucket.
     """
-    rows = db.query(Job.title, Job.salary_min, Job.salary_max).all()
+    dups = (
+        db.query(JobDuplicateLink.duplicate_job_id)
+        .filter(JobDuplicateLink.status == "confirmed")
+        .subquery()
+    )
+    rows = (
+        db.query(Job.title, Job.salary_min, Job.salary_max)
+        .filter(~Job.id.in_(db.query(dups.c.duplicate_job_id)))
+        .all()
+    )
     return summarize_salary_by_role(rows)
 
 
@@ -233,7 +246,11 @@ def _to_float(value: object) -> float:
 
 
 def get_industry_demand(db: Session) -> IndustryDemandResponse:
-    """Return industry demand summaries grouped by niche, career, type, and site.
+    """Return industry demand summaries for canonical/independent jobs.
+
+    Confirmed duplicate observations are excluded.  Cross-source confirmed
+    duplicates are currently negligible (a handful of rows), so excluding
+    them all does not materially affect source-level visibility.
 
     Args:
         db: SQLAlchemy session.
@@ -241,6 +258,11 @@ def get_industry_demand(db: Session) -> IndustryDemandResponse:
     Returns:
         ``IndustryDemandResponse`` with one item per group combination.
     """
+    dups = (
+        db.query(JobDuplicateLink.duplicate_job_id)
+        .filter(JobDuplicateLink.status == "confirmed")
+        .subquery()
+    )
     rows = db.query(
         Job.title,
         Job.salary_min,
@@ -251,7 +273,7 @@ def get_industry_demand(db: Session) -> IndustryDemandResponse:
         Job.site,
         Job.date_scraped,
         Job.date_posted,
-    ).all()
+    ).filter(~Job.id.in_(db.query(dups.c.duplicate_job_id))).all()
     return summarize_industry_demand(rows)
 
 
@@ -464,25 +486,96 @@ def _build_geography_item(bucket: dict[str, object]) -> GeographyItem:
     )
 
 
-def get_skill_frequency(db: Session, limit: int = 50) -> SkillFrequencyResponse:
-    """Return global keyword frequency from the keywords_json column.
+def get_skill_frequency(db: Session, limit: int = 30) -> SkillFrequencyResponse:
+    """Return canonical skill frequency from skills_json.
 
-    Args:
-        db: SQLAlchemy session.
-        limit: Maximum number of keywords to return (default 50, max 200).
+    Only canonical/independent jobs count — confirmed duplicate
+    observations are excluded.  Jobs with ``skills_json IS NULL``
+    are excluded from the processed population.
 
-    Returns:
-        ``SkillFrequencyResponse`` with items sorted by count descending,
-        then keyword ascending.
+    Uses Python-side JSON aggregation for SQLite/PostgreSQL compatibility.
     """
-    rows = db.query(
-        Job.id,
-        Job.title,
-        Job.salary_min,
-        Job.salary_max,
-        Job.keywords_json,
-    ).all()
-    return summarize_skill_frequency(rows, limit=limit)
+    # Canonical jobs: exclude confirmed duplicates
+    canonical = db.query(Job.id).filter(
+        ~exists().where(
+            and_(
+                JobDuplicateLink.duplicate_job_id == Job.id,
+                JobDuplicateLink.status == "confirmed",
+            )
+        )
+    )
+
+    canonical_total = canonical.count()
+    processed = canonical.filter(Job.skills_json.isnot(None))
+    processed_total = processed.count()
+
+    # Aggregate in Python for cross-dialect compatibility
+    skill_to_jobs: dict[str, set[int]] = {}
+    with_skills = 0
+    for (job_id, skills_val) in db.query(Job.id, Job.skills_json).filter(
+        Job.id.in_(processed.with_entities(Job.id))
+    ).all():
+        skills = _parse_skills_array(skills_val)
+        if skills:
+            with_skills += 1
+        for skill in skills:
+            skill_to_jobs.setdefault(skill, set()).add(job_id)
+
+    items = [
+        SkillFrequencyItem(
+            skill=skill,
+            job_count=len(job_ids),
+            prevalence=round(len(job_ids) / processed_total, 4) if processed_total > 0 else 0.0,
+        )
+        for skill, job_ids in skill_to_jobs.items()
+    ]
+    items.sort(key=lambda i: (-i.job_count, i.skill))
+    items = items[:limit]
+
+    zero_skills = processed_total - with_skills
+    unique_skills = len(skill_to_jobs)
+    coverage = round(processed_total / canonical_total, 4) if canonical_total > 0 else 0.0
+
+    # Date range for the canonical dataset
+    date_range = (
+        db.query(
+            func.min(Job.date_scraped).label("start"),
+            func.max(Job.date_scraped).label("end"),
+        )
+        .filter(Job.id.in_(canonical.with_entities(Job.id)))
+        .one_or_none()
+    )
+    dataset_start = str(date_range.start.date()) if date_range and date_range.start else None
+    dataset_end = str(date_range.end.date()) if date_range and date_range.end else None
+
+    return SkillFrequencyResponse(
+        items=items,
+        processed_canonical_jobs=processed_total,
+        canonical_jobs_total=canonical_total,
+        jobs_with_at_least_one_skill=with_skills,
+        zero_skill_jobs=zero_skills,
+        skill_coverage=coverage,
+        total_unique_skills_observed=unique_skills,
+        limit=limit,
+        dataset_start_date=dataset_start,
+        dataset_end_date=dataset_end,
+    )
+
+
+def _parse_skills_array(value: object) -> list[str]:
+    """Safely parse skills_json into a normalized list of canonical skill keys."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(s).strip().casefold() for s in value if s is not None and str(s).strip()]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, list):
+                return [str(s).strip().casefold() for s in parsed if s is not None and str(s).strip()]
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
 
 
 def summarize_skill_frequency(

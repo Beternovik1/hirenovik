@@ -82,20 +82,26 @@ class GeographyResponse(BaseModel):
 
 
 class SkillFrequencyItem(BaseModel):
-    """Keyword frequency for one skill extracted from keywords_json."""
+    """Canonical skill frequency for one extracted skill."""
 
-    keyword: str
-    rows: int
+    skill: str
+    job_count: int
+    prevalence: float
 
 
 class SkillFrequencyResponse(BaseModel):
-    """Global keyword frequency with dataset-level metadata."""
+    """Canonical skill frequency with dataset coverage metadata."""
 
     items: list[SkillFrequencyItem]
-    total_unique_keywords: int
-    total_listings_with_keywords: int
-    total_listings: int
-    keyword_coverage_pct: float
+    processed_canonical_jobs: int
+    canonical_jobs_total: int
+    jobs_with_at_least_one_skill: int
+    zero_skill_jobs: int
+    skill_coverage: float
+    total_unique_skills_observed: int
+    limit: int
+    dataset_start_date: str | None = None
+    dataset_end_date: str | None = None
 
 
 class TimeTrendItem(BaseModel):

@@ -4,16 +4,6 @@ import { useState, useEffect } from "react";
 import { fetchSkillFrequency } from "@/lib/api";
 import { normalizeSkill, skillLabel, getSkillIcon } from "@/lib/skills";
 import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  LabelList,
-} from "recharts";
-import {
   siPython,
   siJavascript,
   siTypescript,
@@ -46,10 +36,24 @@ import {
   siKotlin,
   siScala,
   siR,
+  siSpring,
+  siAngular,
+  siDotnet,
+  siLinux,
+  siHtml5,
+  siCss3,
+  siDatabricks,
+  siGooglebigquery,
+  siSap,
+  siJira,
 } from "simple-icons";
 import InsightCard from "./InsightCard";
 import InsightState from "./InsightState";
 
+// ---------------------------------------------------------------------------
+// Icon map — real Simple Icons objects keyed by the iconSlug from skills.js.
+// Each value is a Simple Icons object: { path, hex, title, slug }.
+// Special key "html_css" maps to an array [siHtml5, siCss3] for dual-icon rendering.
 const SKILL_ICONS = {
   siPython,
   siJavascript,
@@ -83,164 +87,67 @@ const SKILL_ICONS = {
   siKotlin,
   siScala,
   siR,
+  siSpring,
+  siAngular,
+  siDotnet,
+  siLinux,
+  siDatabricks,
+  siGooglebigquery,
+  siSap,
+  siJira,
+  // HTML/CSS gets two logos in one cell
+  html_css: [siHtml5, siCss3],
 };
 
-function SkillIcon({ slug, size = 16 }) {
-  const Icon = SKILL_ICONS[slug];
-  if (!Icon) {
-    return (
-      <div
-        style={{
-          width: size,
-          height: size,
-          borderRadius: 3,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: size * 0.6,
-          fontWeight: 700,
-          color: "var(--hirenovik-analytics-ink-secondary)",
-          backgroundColor: "var(--hirenovik-analytics-surface-alt)",
-          lineHeight: 1,
-          flexShrink: 0,
-        }}
-        aria-hidden="true"
-      />
-    );
-  }
+/** Render a single Simple Icons object as an SVG <path> in its brand colour. */
+function IconSvg({ icon, size = 16 }) {
   return (
-    <Icon
-      size={size}
-      color="currentColor"
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
       aria-hidden="true"
-      style={{ flexShrink: 0, display: "block" }}
-    />
+      style={{ display: "block", flexShrink: 0 }}
+    >
+      <path d={icon.path} fill={`#${icon.hex}`} />
+    </svg>
   );
 }
 
+function SkillRowIcon({ slug }) {
+  const entry = SKILL_ICONS[slug];
+  if (!entry) return null;
+
+  // Dual icons for HTML/CSS
+  if (Array.isArray(entry)) {
+    return (
+      <span style={{ display: "flex", gap: 2, alignItems: "center" }}>
+        {entry.map((icon) => (
+          <IconSvg key={icon.slug} icon={icon} size={14} />
+        ))}
+      </span>
+    );
+  }
+
+  return <IconSvg icon={entry} size={16} />;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 function formatCount(n) {
-  if (n == null) return "—";
+  if (n == null) return "\u2014";
   return Number(n).toLocaleString("en-US");
 }
 
-function axisTick(v) {
-  if (v === 0) return "0";
-  return String(v);
-}
 
-function YAxisTick(props) {
-  const { x, y, payload } = props;
-  const { rank, iconSlug } = payload || {};
-  const rankText = rank != null ? String(rank).padStart(2, "0") : "";
-  const Icon = iconSlug ? SKILL_ICONS[iconSlug] : null;
-
-  return (
-    <g transform={`translate(${x},${y})`}>
-      <text
-        x={20}
-        y={0}
-        dy={4}
-        textAnchor="end"
-        fill="var(--hirenovik-analytics-ink-secondary)"
-        fontSize={12}
-        style={{ fontFamily: "var(--font-geist-mono)" }}
-      >
-        {rankText}
-      </text>
-      {Icon ? (
-        <g
-          transform="translate(24, -8)"
-          color="var(--hirenovik-analytics-ink-secondary)"
-        >
-          <Icon size={16} color="currentColor" aria-hidden="true" />
-        </g>
-      ) : (
-        <rect
-          x={24}
-          y={-8}
-          width={16}
-          height={16}
-          rx={3}
-          fill="var(--hirenovik-analytics-surface-alt)"
-        />
-      )}
-    </g>
-  );
-}
-
-function BarLabel(props) {
-  const { x, y, width, value, name } = props;
-  if (value == null) return null;
-  return (
-    <text
-      x={x + width + 8}
-      y={y + 13.5}
-      fill="var(--hirenovik-analytics-ink-secondary)"
-      fontSize={12}
-      style={{ fontFamily: "var(--font-geist-sans)", fontWeight: 500 }}
-    >
-      <tspan style={{ fontFamily: "var(--font-geist-sans)" }}>{name}</tspan>
-      <tspan fill="var(--hirenovik-analytics-ink-secondary)" dx={4}>
-        ·
-      </tspan>
-      <tspan
-        dx={4}
-        style={{ fontFamily: "var(--font-geist-mono)" }}
-      >
-        {formatCount(value)}
-      </tspan>
-    </text>
-  );
-}
-
-function ChartTooltip({ active, payload, totalListingsWithKeywords }) {
-  if (!active || !payload || !payload.length) return null;
-  const entry = payload[0].payload;
-  const prevalence =
-    totalListingsWithKeywords > 0
-      ? ((entry.count / totalListingsWithKeywords) * 100).toFixed(1)
-      : "0.0";
-
-  return (
-    <div
-      style={{
-        backgroundColor: "#FFFFFF",
-        border: "1px solid #E6E3DE",
-        borderRadius: "6px",
-        padding: "10px 14px",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
-      }}
-    >
-      <p
-        style={{
-          margin: 0,
-          fontSize: 13,
-          fontWeight: 600,
-          color: "#18181B",
-          fontFamily: "var(--font-geist-sans)",
-        }}
-      >
-        {entry.name} — {formatCount(entry.count)} listings
-      </p>
-      <p
-        style={{
-          margin: "4px 0 0",
-          fontSize: 12,
-          color: "#71717A",
-          fontFamily: "var(--font-geist-sans)",
-        }}
-      >
-        Appears in {prevalence}% of enriched listings · Rank #{entry.rank}
-      </p>
-    </div>
-  );
-}
-
+// Shimmer / loading state
+// ---------------------------------------------------------------------------
 function Shimmer() {
   return (
     <InsightCard
       title="Most Requested Skills"
-      description="Skills most frequently mentioned in keyword-enriched job listings."
+      description="Skills most frequently detected across analyzed job listings."
     >
       <div className="mt-4 space-y-3 animate-pulse">
         {Array.from({ length: 8 }).map((_, i) => (
@@ -255,9 +162,21 @@ function Shimmer() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 const VISIBLE_DEFAULT = 15;
 const VISIBLE_EXPANDED = 30;
 
+// Grid column widths (pixels – the "1fr" for bar column is handled via flex).
+const RANK_W = 28;
+const ICON_W = 24;
+const LABEL_W = 150;
+const COUNT_W = 72;
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 export default function SkillFrequencyChart() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -285,7 +204,10 @@ export default function SkillFrequencyChart() {
   if (loading) return <Shimmer />;
   if (error)
     return (
-      <InsightCard title="Most Requested Skills" description="Skills most frequently mentioned in keyword-enriched job listings.">
+      <InsightCard
+        title="Most Requested Skills"
+        description="Skills most frequently detected across analyzed job listings."
+      >
         <InsightState
           state="error"
           message="Unable to load skill-demand analytics."
@@ -294,10 +216,13 @@ export default function SkillFrequencyChart() {
     );
   if (!data || !data.items || data.items.length === 0) {
     return (
-      <InsightCard title="Most Requested Skills" description="Skills most frequently mentioned in keyword-enriched job listings.">
+      <InsightCard
+        title="Most Requested Skills"
+        description="Skills most frequently detected across analyzed job listings."
+      >
         <InsightState
           state="empty"
-          message="No skill data is available for the current dataset. Keyword enrichment must be completed before skill-demand insights can be calculated."
+          message="No skill extraction data is available yet. Run the skill extraction backfill to populate results."
         />
       </InsightCard>
     );
@@ -306,98 +231,245 @@ export default function SkillFrequencyChart() {
   const visibleCount = expanded ? VISIBLE_EXPANDED : VISIBLE_DEFAULT;
   const sliced = data.items.slice(0, visibleCount);
 
-  const chartData = sliced.map((item, i) => {
-    const canonical = normalizeSkill(item.keyword);
+  const rows = sliced.map((item, i) => {
+    const canonical = normalizeSkill(item.skill);
     return {
-      name: skillLabel(canonical),
+      label: skillLabel(canonical),
       canonical,
-      count: item.rows,
+      count: item.job_count,
+      prevalence: item.prevalence,
       rank: i + 1,
       iconSlug: getSkillIcon(canonical),
     };
   });
 
-  const totalKeywords = data.total_unique_keywords ?? data.items.length;
-  const enrichedListings = data.total_listings_with_keywords ?? 0;
-  const coveragePct = data.keyword_coverage_pct ?? 0;
+  const maxCount = Math.max(...rows.map((r) => r.count), 1);
+
+  const totalSkills = data.total_unique_skills_observed ?? data.items.length;
+  const processedJobs = data.processed_canonical_jobs ?? 0;
+  const coveragePct =
+    data.skill_coverage != null ? Math.round(data.skill_coverage * 100) : 0;
+  const withSkills = data.jobs_with_at_least_one_skill ?? 0;
 
   const evidenceItems = [
     {
-      label: `Top ${visibleCount} of ${totalKeywords} skills`,
+      label: `Top ${visibleCount} of ${totalSkills} observed skills`,
       value: null,
       variant: "neutral",
     },
     {
-      label: "Keyword-enriched listings",
-      value: formatCount(enrichedListings),
+      label: "Skill-processed listings",
+      value: formatCount(processedJobs),
       variant: "neutral",
     },
     {
-      label: "Keyword coverage",
+      label: "Skill coverage",
       value: `${coveragePct}%`,
+      variant: "neutral",
+    },
+    {
+      label: "Listings with skills",
+      value: formatCount(withSkills),
       variant: "neutral",
     },
   ];
 
   const hasExpand = data.items.length > VISIBLE_DEFAULT;
-  const barSize = 20;
-  const chartHeight = Math.max(chartData.length * (barSize + 12), 200);
 
   return (
     <div>
       <InsightCard
         title="Most Requested Skills"
-        description="Skills most frequently mentioned in keyword-enriched job listings."
+        description="Skills most frequently detected across analyzed job listings."
         evidence={evidenceItems}
       >
-        <ResponsiveContainer width="100%" height={chartHeight}>
-          <BarChart
-            data={chartData}
-            layout="vertical"
-            margin={{ top: 4, right: 170, left: 50, bottom: 4 }}
-          >
-            <CartesianGrid
-              horizontal={false}
-              stroke="#E8E5E0"
-              strokeDasharray="3 3"
-            />
-            <XAxis
-              type="number"
-              stroke="var(--hirenovik-analytics-ink-secondary)"
-              fontSize={11}
-              tickFormatter={axisTick}
-              style={{ fontFamily: "var(--font-geist-mono)" }}
-              axisLine={false}
-              tickLine={false}
-            />
-            <YAxis
-              dataKey="name"
-              type="category"
-              tick={(props) => <YAxisTick {...props} />}
-              width={44}
-              interval={0}
-              axisLine={false}
-              tickLine={false}
-            />
-            <Tooltip
-              content={
-                <ChartTooltip
-                  totalListingsWithKeywords={enrichedListings}
-                />
-              }
-              cursor={{ fill: "#F4F2EF" }}
-            />
-            <Bar
-              dataKey="count"
-              fill="#1E3A5F"
-              radius={[0, 2, 2, 0]}
-              barSize={barSize}
-              isAnimationActive={false}
+        {/* ---------- scale reference ---------- */}
+        <div
+          style={{
+            marginLeft: RANK_W + ICON_W + LABEL_W,
+            marginRight: COUNT_W,
+            marginBottom: 12,
+            position: "relative",
+            height: 18,
+          }}
+        >
+          {[0, 25, 50, 75, 100].map((pct) => (
+            <span
+              key={pct}
+              style={{
+                position: "absolute",
+                left: `${pct}%`,
+                transform: "translateX(-50%)",
+                fontSize: 10,
+                fontFamily: "var(--font-geist-mono)",
+                color: "#A1A1AA",
+              }}
             >
-              <LabelList dataKey="count" content={<BarLabel />} />
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
+              {Math.round((maxCount * pct) / 100)}
+            </span>
+          ))}
+        </div>
+
+        {/* ---------- rows ---------- */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {rows.map((row) => {
+            const barPct = (row.count / maxCount) * 100;
+            const prevalencePct =
+              row.prevalence != null
+                ? (row.prevalence * 100).toFixed(1)
+                : null;
+
+            return (
+              <div
+                key={row.rank}
+                className="skill-row"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  height: 22,
+                  position: "relative",
+                }}
+              >
+                {/* --- hover tooltip --- */}
+                <div
+                  className="skill-tooltip"
+                  style={{
+                    display: "none",
+                    position: "absolute",
+                    left: 0,
+                    bottom: "calc(100% + 6px)",
+                    backgroundColor: "#FFFFFF",
+                    border: "1px solid #E6E3DE",
+                    borderRadius: 6,
+                    padding: "10px 14px",
+                    boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                    zIndex: 10,
+                    whiteSpace: "nowrap",
+                    pointerEvents: "none",
+                  }}
+                >
+                  <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: "#18181B", fontFamily: "var(--font-geist-sans)" }}>
+                    {row.label}
+                  </p>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#71717A", fontFamily: "var(--font-geist-sans)" }}>
+                    Rank #{row.rank} · {formatCount(row.count)} listings
+                    {prevalencePct ? ` · ${prevalencePct}% of skill-processed` : ""}
+                  </p>
+                  <p style={{ margin: "3px 0 0", fontSize: 11, color: "#A1A1AA", fontFamily: "var(--font-geist-sans)" }}>
+                    Based on {formatCount(processedJobs)} processed canonical listings
+                  </p>
+                </div>
+                {/* Rank */}
+                <span
+                  style={{
+                    width: RANK_W,
+                    flexShrink: 0,
+                    fontSize: 11,
+                    fontFamily: "var(--font-geist-mono)",
+                    color: "#A1A1AA",
+                    textAlign: "right",
+                    paddingRight: 6,
+                  }}
+                >
+                  {String(row.rank).padStart(2, "0")}
+                </span>
+
+                {/* Icon */}
+                <span
+                  style={{
+                    width: ICON_W,
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <SkillRowIcon slug={row.iconSlug} />
+                </span>
+
+                {/* Skill label */}
+                <span
+                  style={{
+                    width: LABEL_W,
+                    flexShrink: 0,
+                    fontSize: 13,
+                    fontFamily: "var(--font-geist-sans)",
+                    fontWeight: 500,
+                    color: "#18181B",
+                    paddingRight: 8,
+                    textAlign: "right",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {row.label}
+                </span>
+
+                {/* Bar area */}
+                <div
+                  style={{
+                    flex: 1,
+                    height: "100%",
+                    position: "relative",
+                    minWidth: 0,
+                  }}
+                >
+                  {/* Background grid lines */}
+                  {[0, 25, 50, 75, 100].map((pct) => (
+                    <div
+                      key={pct}
+                      style={{
+                        position: "absolute",
+                        left: `${pct}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 1,
+                        backgroundColor: "#F0EDE8",
+                        zIndex: 0,
+                      }}
+                    />
+                  ))}
+                  {/* Bar */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      height: "100%",
+                      width: `${barPct}%`,
+                      backgroundColor: "#1E3A5F",
+                      borderRadius: "0 2px 2px 0",
+                      zIndex: 1,
+                      minWidth: barPct > 0 ? 2 : 0,
+                    }}
+                  />
+                </div>
+
+                {/* Count */}
+                <span
+                  style={{
+                    width: COUNT_W,
+                    flexShrink: 0,
+                    fontSize: 12,
+                    fontFamily: "var(--font-geist-mono)",
+                    color: "#52525B",
+                    textAlign: "right",
+                    paddingLeft: 12,
+                  }}
+                >
+                  {formatCount(row.count)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {/* Hover tooltip behaviour — pure CSS, no JS */}
+        <style>{`
+          .skill-row:hover .skill-tooltip {
+            display: block !important;
+          }
+        `}</style>
       </InsightCard>
 
       {hasExpand && (
