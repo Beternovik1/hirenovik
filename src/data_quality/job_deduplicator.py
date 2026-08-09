@@ -39,9 +39,10 @@ from urllib.parse import urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
-#: Deduplication logic version — increments when the grouping or
-#: canonical-selection algorithm changes.
-DEDUP_VERSION = "1.0.0"
+#: Deduplication logic version — re-exported from the shared constant
+#: in ``src.data_quality`` so both dedup checkpoints and confirmed
+#: links use the same identifier.
+from src.data_quality import DEDUP_VERSION  # noqa: F811
 
 #: Known dedup scopes.
 SCOPE_SAME_SOURCE = "same_source"

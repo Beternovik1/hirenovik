@@ -495,16 +495,63 @@ class TestEmptyState:
 
 
 class TestDedupPending:
-    """Dedup checkpoint remains unavailable until Slice 2."""
+    """Dedup pending uses job_dedup_checks with scope-specific counts."""
 
-    def test_dedup_pending_unavailable(self, session):
+    def test_dedup_pending_is_numeric_when_table_exists(self, session):
+        """With the table present, pending is a count for each scope."""
+        _add_all(session, _job(1, site="computrabajo", description="Python SQL AWS experience needed"))
         inspector = PendingWorkInspector()
         with patch(
             "src.data_quality.pending_work.db_connect",
             return_value=session.get_bind(),
         ):
             result = inspector.inspect()
-        assert result.dedup_pending == "checkpoint_not_available"
+        # Same_source: Computrabajo job, no checkpoint → pending = 1
+        assert result.dedup_pending_same_source == "1"
+
+    def test_dedup_pending_zero_when_checkpoint_exists(self, session):
+        """Jobs with checkpoints should not count as pending."""
+        from datetime import datetime
+        from src.database.models import JobDedupCheck
+        _add_all(session, _job(1, site="computrabajo", description="Python SQL AWS experience needed"))
+        session.add(
+            JobDedupCheck(
+                job_id=1, scope="same_source", dedup_version="1.0.0",
+                checked_at=datetime(2026, 8, 9),
+                evidence_hash="abc123",
+            )
+        )
+        session.commit()
+        inspector = PendingWorkInspector()
+        with patch(
+            "src.data_quality.pending_work.db_connect",
+            return_value=session.get_bind(),
+        ):
+            result = inspector.inspect()
+        assert result.dedup_pending_same_source == "0"
+
+    def test_non_computrabajo_not_same_source_eligible(self, session):
+        """Indeed jobs are not eligible for same_source dedup."""
+        _add_all(session, _job(1, site="indeed", description="Python SQL AWS experience needed"))
+        inspector = PendingWorkInspector()
+        with patch(
+            "src.data_quality.pending_work.db_connect",
+            return_value=session.get_bind(),
+        ):
+            result = inspector.inspect()
+        # Indeed job → not eligible for same_source (Computrabajo-only matcher)
+        assert result.dedup_pending_same_source == "0"
+
+    def test_cross_source_requires_description(self, session):
+        """Cross-source pending excludes jobs without description."""
+        _add_all(session, _job(1, site="indeed", description=None))
+        inspector = PendingWorkInspector()
+        with patch(
+            "src.data_quality.pending_work.db_connect",
+            return_value=session.get_bind(),
+        ):
+            result = inspector.inspect()
+        assert result.dedup_pending_cross_source == "0"
 
 
 class TestDuplicatesCounts:
@@ -534,7 +581,7 @@ class TestStatusTable:
     """The status_table output is human-readable and includes key fields."""
 
     def test_status_table_includes_all_sections(self, session):
-        _add_all(session, _job(1, description="Python SQL"))
+        _add_all(session, _job(1, description="Python SQL AWS experience required"))
         inspector = PendingWorkInspector()
         with patch(
             "src.data_quality.pending_work.db_connect",
@@ -549,7 +596,7 @@ class TestStatusTable:
         assert "Skill-ready:" in table
         assert "NLP complete:" in table
         assert "Blocked/no desc:" in table
-        assert "checkpoint_not_available" in table
+        assert "Dedup pending:" in table
 
 
 class TestNoPrivateImport:

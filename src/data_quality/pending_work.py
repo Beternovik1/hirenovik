@@ -94,15 +94,21 @@ class PendingWorkSummary:
     nlp_complete_canonical: int = 0
     blocked_no_description: int = 0
 
-    # Dedup (not yet measurable without a durable checkpoint)
-    dedup_pending: Optional[str] = None
+    # Dedup (scope-specific; "checkpoint_not_available" if table missing)
+    dedup_pending_same_source: Optional[str] = None
+    dedup_pending_cross_source: Optional[str] = None
 
     # ------------------------------------------------------------------
     def status_table(self) -> str:
         """Human-readable table matching the planned CLI format."""
-        dedup = (
-            self.dedup_pending
-            if self.dedup_pending is not None
+        ss = (
+            self.dedup_pending_same_source
+            if self.dedup_pending_same_source is not None
+            else "unknown"
+        )
+        cs = (
+            self.dedup_pending_cross_source
+            if self.dedup_pending_cross_source is not None
             else "unknown"
         )
         return (
@@ -125,7 +131,9 @@ class PendingWorkSummary:
             f"NLP complete:      {self.nlp_complete_canonical:>10,}\n"
             f"Blocked/no desc:   {self.blocked_no_description:>10,}\n"
             f"\n"
-            f"Dedup pending:     {dedup:>10}\n"
+            f"Dedup pending:\n"
+            f"  same_source:     {ss:>10}\n"
+            f"  cross_source:    {cs:>10}\n"
         )
 
 
@@ -203,11 +211,18 @@ class PendingWorkInspector:
         )
 
         # ── Dedup pending ────────────────────────────────────────────
-        # No durable dedup checkpoint exists on the jobs table.
-        # job_duplicate_links records *results* of past dedup runs but
-        # we cannot distinguish "never evaluated" from "evaluated,
-        # found independent".  This will be addressed in Slice 2.
-        s.dedup_pending = "checkpoint_not_available"
+        # Scope-specific counts using the job_dedup_checks table.
+        # Falls back gracefully if the table doesn't exist yet.
+        def _pending(scope: str) -> str:
+            try:
+                from src.data_quality.dedup_checkpoint import count_pending as _cp
+                n = _cp(session, scope=scope, eligible_only=True)
+                return str(n)
+            except Exception:
+                return "checkpoint_not_available"
+
+        s.dedup_pending_same_source = _pending("same_source")
+        s.dedup_pending_cross_source = _pending("cross_source")
 
         return s
 

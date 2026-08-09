@@ -234,6 +234,76 @@ class JobDuplicateLink(Base):
 # SQLite tests use a simplified constraint instead; see conftest._create_partial_unique_index.
 
 
+class JobDedupCheck(Base):
+    """Durable record that a job was evaluated by smart dedup logic.
+
+    One row per (job, scope, dedup_version).  Absence of a row for a
+    given (job, scope, version) means the job has never been evaluated
+    for that scope under the current dedup version — or a previous
+    evaluation is stale.
+
+    This table solves the "checked-and-independent" problem: without it
+    we cannot distinguish a job that was evaluated and found independent
+    from one that was simply never checked.  ``job_duplicate_links``
+    only records *detected* duplicates, not successful independence
+    evaluations.
+
+    Outcome semantics:
+        The checkpoint records "evaluation completed".  If a duplicate
+        was found, ``job_duplicate_links`` holds that relationship.
+        If no duplicate was found, the job is independent and the
+        checkpoint is the only durable evidence that the evaluation
+        occurred.  There is no ``outcome`` column — the presence or
+        absence of a ``job_duplicate_links`` row IS the outcome.
+
+    Stale evidence:
+        ``evidence_hash`` stores a compact, scope-specific fingerprint
+        of the dedup-relevant input fields at evaluation time.
+        For ``same_source`` this is the canonical URL; for
+        ``cross_source`` it covers title, company, location,
+        description, salary, and date — all six fields used by
+        :class:`CrossSourceMatcher` for scoring and guard decisions.
+
+        The fingerprint is cheap (~64 hex chars) and avoids the
+        ``last_updated`` loop where NLP writes (skills_json,
+        cleaned_description) would incorrectly trigger dedup
+        re-evaluation.  Only Phase 2 enrichment of raw evidence
+        fields can make a checkpoint stale.
+    """
+
+    __tablename__ = "job_dedup_checks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(
+        BigInteger, ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    scope = Column(String(20), nullable=False)
+    dedup_version = Column(String(32), nullable=False)
+    checked_at = Column(DateTime(timezone=True), nullable=False)
+    evidence_hash = Column(String(64), nullable=True)
+
+    __table_args__ = (
+        # One checkpoint per (job, scope, version) — re-running the same
+        # version for the same job+scope is idempotent (upsert).
+        UniqueConstraint(
+            "job_id", "scope", "dedup_version",
+            name="uq_dedup_check_job_scope_version",
+        ),
+        Index(
+            "idx_dedup_check_job_scope",
+            "job_id", "scope",
+            unique=False,
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            f"<JobDedupCheck(job_id={self.job_id}, "
+            f"scope={self.scope}, version={self.dedup_version}, "
+            f"checked_at={self.checked_at})>"
+        )
+
+
 def db_connect():
     database_url = os.getenv("DATABASE_URL")
 
