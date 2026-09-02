@@ -79,6 +79,37 @@ def is_placeholder(raw: str) -> bool:
     return raw.strip().casefold() in _PLACEHOLDERS
 
 
+def unusable_description_filter(description_column):
+    """Return a SQLAlchemy expression that is ``True`` for descriptions
+    that ``is_usable`` would reject.
+
+    Covers the same rules as :func:`is_usable` without checking for NULL
+    or empty (those are separate query conditions):
+    the description is a known placeholder or shorter than
+    ``MIN_RAW_LENGTH``.
+
+    Usage in a query::
+
+        from src.nlp.description_preparer import unusable_description_filter
+        query = session.query(Job).filter(
+            unusable_description_filter(Job.description),
+            ...
+        )
+
+    This lets other modules such as :class:`PendingWorkInspector`
+    efficiently count unusable rows without importing private constants
+    or iterating rows in Python.
+    """
+    from sqlalchemy import func, or_
+
+    stripped = func.trim(description_column)
+    placeholders = [p.casefold() for p in _PLACEHOLDERS]
+    return or_(
+        func.lower(stripped).in_(placeholders),
+        func.length(stripped) < MIN_RAW_LENGTH,
+    )
+
+
 def is_usable(raw: Optional[str], min_length: int = MIN_RAW_LENGTH) -> bool:
     """Return True if *raw* is a usable description candidate.
 

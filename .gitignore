@@ -6,6 +6,9 @@ venv/
 .venv/
 *.pyc
 
+# Next.js build
+.next/
+
 # Data & Databases 
 *.db
 *.sqlite3

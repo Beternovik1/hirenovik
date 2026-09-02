@@ -329,10 +329,12 @@ class TestSelectCanonical:
 
     def test_description_preferred_when_no_salary(self) -> None:
         rows = [
-            {"id": 1, "salary_min": None, "salary_max": None, "description": None,
+            {"id": 1, "salary_min": None, "salary_max": None,
+             "description": "Competencias añadidas por la empresa",
              "date_scraped": datetime(2026, 1, 1)},
             {"id": 2, "salary_min": None, "salary_max": None,
-             "description": "Valid text", "date_scraped": datetime(2026, 1, 2)},
+             "description": "Python SQL AWS experience required for this role",
+             "date_scraped": datetime(2026, 1, 2)},
         ]
         assert select_canonical(rows)["id"] == 2
 
