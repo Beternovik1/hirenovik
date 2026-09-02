@@ -12,6 +12,11 @@ from src.data_quality.dedup_checkpoint import (
     missing_checkpoint_ids,
     count_pending,
 )
+from src.data_quality.same_source_initializer import (
+    SameSourceCheckpointInitializer,
+    SameSourceInitMetrics,
+)
+from src.data_quality.same_source_planner import plan_pending_same_source_groups
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -94,9 +99,53 @@ class TestRecordCheckpoint:
 
     def test_idempotent_same_scope_version(self, session):
         _job(session, 1, description="Python SQL")
-        record_checkpoint(session, 1, scope="same_source")
-        record_checkpoint(session, 1, scope="same_source")
+        first_checked_at = datetime(2026, 8, 9, 10, 0)
+        later_checked_at = datetime(2026, 8, 9, 11, 0)
+        first = record_checkpoint(
+            session,
+            1,
+            scope="same_source",
+            checked_at=first_checked_at,
+        )
+        changes_before = session.connection().connection.driver_connection.total_changes
+        second = record_checkpoint(
+            session,
+            1,
+            scope="same_source",
+            checked_at=later_checked_at,
+        )
         assert session.query(JobDedupCheck).count() == 1
+        assert second.id == first.id
+        assert second.checked_at == first_checked_at
+        assert session.connection().connection.driver_connection.total_changes == changes_before
+
+    def test_stale_same_version_refreshes_hash_and_checked_at(self, session):
+        _job(session, 1, description="Python SQL")
+        first_checked_at = datetime(2026, 8, 9, 10, 0)
+        refreshed_at = datetime(2026, 8, 9, 11, 0)
+        first = record_checkpoint(
+            session,
+            1,
+            scope="same_source",
+            checked_at=first_checked_at,
+        )
+        first_id = first.id
+        first_hash = first.evidence_hash
+
+        session.query(Job).filter(Job.id == 1).update({"salary_min": 30_000})
+        session.commit()
+        refreshed = record_checkpoint(
+            session,
+            1,
+            scope="same_source",
+            checked_at=refreshed_at,
+        )
+
+        assert session.query(JobDedupCheck).count() == 1
+        assert refreshed.id == first_id
+        assert refreshed.evidence_hash != first_hash
+        assert refreshed.checked_at == refreshed_at
+        assert has_checkpoint(session, 1, scope="same_source") is True
 
     def test_different_scopes_independent(self, session):
         _job(session, 1, description="Python SQL")
@@ -135,6 +184,19 @@ class TestHasCheckpoint:
         session.query(Job).filter(Job.id == 1).update({"skills_json": ["python", "sql"]})
         session.commit()
         assert has_checkpoint(session, 1, scope="cross_source") is True
+
+    def test_same_source_stays_true_when_nlp_fields_change(self, session):
+        _job(session, 1, description="Python SQL AWS experience required")
+        record_checkpoint(session, 1, scope="same_source")
+        session.query(Job).filter(Job.id == 1).update(
+            {
+                "cleaned_description": "python sql aws experience required",
+                "skills_json": ["python", "sql", "aws"],
+                "keywords_json": {"topic": 1},
+            }
+        )
+        session.commit()
+        assert has_checkpoint(session, 1, scope="same_source") is True
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +241,13 @@ class TestCountPending:
         record_checkpoint(session, 1, scope="same_source")
         assert count_pending(session, scope="same_source") == 0
 
+    def test_stale_checkpoint_is_pending(self, session):
+        _job(session, 1, site="computrabajo", description="Python")
+        record_checkpoint(session, 1, scope="same_source")
+        session.query(Job).filter(Job.id == 1).update({"salary_min": 30_000})
+        session.commit()
+        assert count_pending(session, scope="same_source") == 1
+
     def test_non_computrabajo_not_same_source_eligible(self, session):
         _job(session, 1, site="indeed", description="Python SQL")
         assert count_pending(session, scope="same_source") == 0
@@ -187,7 +256,7 @@ class TestCountPending:
         _job(session, 1, site="indeed", description=None)
         assert count_pending(session, scope="cross_source") == 0
 
-    def test_confirmed_duplicate_excluded(self, session):
+    def test_confirmed_duplicate_participates_in_same_source(self, session):
         _job(session, 1, site="computrabajo", description="Python")
         _job(session, 2, site="computrabajo", description="Python")
         session.add(JobDuplicateLink(
@@ -197,7 +266,7 @@ class TestCountPending:
             dedup_version="1.0.0", created_at=NOW,
         ))
         session.commit()
-        assert count_pending(session, scope="same_source") == 1  # only job 1
+        assert count_pending(session, scope="same_source") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -225,8 +294,8 @@ class TestCheckedIndependent:
         session.commit()
         # Link exists, no checkpoint → duplicate confirmed
         assert session.query(JobDuplicateLink).count() == 1
-        # Job 2 is excluded from pending (confirmed duplicate)
-        assert count_pending(session, scope="same_source") == 1
+        # Same-source freshness includes confirmed duplicate observations.
+        assert count_pending(session, scope="same_source") == 2
 
 
 # ---------------------------------------------------------------------------
@@ -258,3 +327,127 @@ class TestSameSourceGroupAwareness:
         assert has_checkpoint(session, 1, scope="same_source") is True
         # The orchestrator sees job 2 pending and re-evaluates the entire
         # URL group (both 1 and 2), which is the correct group-level behaviour.
+
+    def test_planner_expands_one_pending_member_to_only_its_full_group(
+        self, session
+    ):
+        group_url = "https://mx.computrabajo.com/job/group"
+        _job(session, 1, job_url=f"{group_url}#lc=A", salary_min=30_000)
+        _job(session, 2, job_url=f"{group_url}#lc=B")
+        _job(session, 3, job_url="https://mx.computrabajo.com/job/other")
+        session.add(
+            JobDuplicateLink(
+                duplicate_job_id=2,
+                canonical_job_id=1,
+                scope="same_source",
+                method="url_match",
+                confidence=1.0,
+                status="confirmed",
+                dedup_version="1.1.0",
+                created_at=NOW,
+            )
+        )
+        session.commit()
+        for job_id in (1, 2, 3):
+            record_checkpoint(session, job_id, scope="same_source")
+
+        session.query(Job).filter(Job.id == 2).update({"salary_min": 35_000})
+        session.commit()
+
+        plan = plan_pending_same_source_groups(session)
+
+        assert len(plan) == 1
+        assert plan[0].canonical_url == group_url
+        assert plan[0].pending_member_ids == (2,)
+        assert plan[0].member_ids == (1, 2)
+
+    def test_planner_returns_no_groups_when_every_member_is_current(self, session):
+        _job(session, 1)
+        record_checkpoint(session, 1, scope="same_source")
+        assert plan_pending_same_source_groups(session) == []
+
+    def test_multiple_pending_members_schedule_each_pending_group_once(self, session):
+        first_url = "https://mx.computrabajo.com/job/first"
+        second_url = "https://mx.computrabajo.com/job/second"
+        for job_id, url in (
+            (1, f"{first_url}#lc=A"),
+            (2, f"{first_url}#lc=B"),
+            (3, f"{second_url}#lc=A"),
+            (4, f"{second_url}#lc=B"),
+        ):
+            _job(session, job_id, job_url=url)
+            record_checkpoint(session, job_id, scope="same_source")
+
+        session.query(Job).filter(Job.id.in_((1, 2))).update(
+            {"salary_min": 35_000}, synchronize_session=False
+        )
+        session.commit()
+
+        plan = plan_pending_same_source_groups(session)
+
+        assert len(plan) == 1
+        assert plan[0].canonical_url == first_url
+        assert plan[0].member_ids == (1, 2)
+        assert plan[0].pending_member_ids == (1, 2)
+
+    def test_new_member_expands_existing_current_group(self, session):
+        group_url = "https://mx.computrabajo.com/job/group"
+        for job_id, fragment in ((1, "A"), (2, "B")):
+            _job(session, job_id, job_url=f"{group_url}#lc={fragment}")
+            record_checkpoint(session, job_id, scope="same_source")
+        _job(session, 3, job_url=f"{group_url}#lc=C")
+
+        plan = plan_pending_same_source_groups(session)
+
+        assert len(plan) == 1
+        assert plan[0].member_ids == (1, 2, 3)
+        assert plan[0].pending_member_ids == (3,)
+
+    def test_confirmed_duplicate_evidence_change_schedules_full_group(self, session):
+        group_url = "https://mx.computrabajo.com/job/group"
+        _job(session, 1, job_url=f"{group_url}#lc=A")
+        _job(session, 2, job_url=f"{group_url}#lc=B")
+        session.add(
+            JobDuplicateLink(
+                duplicate_job_id=2,
+                canonical_job_id=1,
+                scope="same_source",
+                method="url_match",
+                confidence=1.0,
+                status="confirmed",
+                dedup_version="1.1.0",
+                created_at=NOW,
+            )
+        )
+        session.commit()
+        for job_id in (1, 2):
+            record_checkpoint(session, job_id, scope="same_source")
+        session.query(Job).filter(Job.id == 2).update({"salary_min": 35_000})
+        session.commit()
+
+        plan = plan_pending_same_source_groups(session)
+
+        assert len(plan) == 1
+        assert plan[0].member_ids == (1, 2)
+        assert plan[0].pending_member_ids == (2,)
+
+    def test_initializer_pending_group_evaluation_does_not_mutate(self, session):
+        group_url = "https://mx.computrabajo.com/job/group"
+        _job(session, 1, job_url=f"{group_url}#lc=A", salary_min=30_000)
+        _job(session, 2, job_url=f"{group_url}#lc=B")
+        for job_id in (1, 2):
+            record_checkpoint(session, job_id, scope="same_source")
+        session.query(Job).filter(Job.id == 2).update({"salary_min": 35_000})
+        session.commit()
+        checkpoint_count = session.query(JobDedupCheck).count()
+        link_count = session.query(JobDuplicateLink).count()
+
+        metrics = SameSourceInitMetrics()
+        SameSourceCheckpointInitializer()._evaluate(session, metrics)
+
+        assert metrics.canonical_groups == 1
+        assert metrics.checkpoints_stale == 1
+        assert metrics.checkpoints_current == 1
+        assert metrics.checkpoint_targets == 2
+        assert session.query(JobDedupCheck).count() == checkpoint_count
+        assert session.query(JobDuplicateLink).count() == link_count

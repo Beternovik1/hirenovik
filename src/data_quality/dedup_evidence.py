@@ -11,6 +11,8 @@ from src.data_quality.cross_source_matcher import (
     normalize_company,
     normalize_location,
 )
+from src.data_quality.same_source_url import canonicalize_computrabajo_url
+from src.nlp.description_preparer import is_usable
 
 
 def compute_evidence_hash(
@@ -38,7 +40,7 @@ def compute_evidence_hash(
         2. **Canonical selection** — which row is chosen as canonical
            within a group.  ``select_canonical()`` uses:
            - salary presence (boolean)
-           - description presence (boolean)
+           - usable-description presence (boolean)
            - date_scraped (earliest wins)
            - id (immutable deterministic tie-break, excluded)
 
@@ -65,11 +67,11 @@ def compute_evidence_hash(
         # does it have a description? when was it scraped?
         # The id field is immutable and excluded.
         has_salary = salary_min is not None or salary_max is not None
-        has_desc = bool(description and description.strip())
+        has_desc = bool(description and is_usable(str(description)))
         payload = {
-            "url": (job_url or "").strip(),
+            "url": canonicalize_computrabajo_url(job_url or ""),
             "has_salary": has_salary,
-            "has_description": has_desc,
+            "has_usable_description": has_desc,
             "date_scraped": (date_scraped or ""),
         }
 

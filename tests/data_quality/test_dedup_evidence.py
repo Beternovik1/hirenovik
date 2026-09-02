@@ -2,6 +2,7 @@
 
 import pytest
 
+from src.data_quality import CROSS_SOURCE_DEDUP_VERSION, SAME_SOURCE_DEDUP_VERSION
 from src.data_quality.dedup_evidence import compute_evidence_hash
 
 
@@ -37,7 +38,11 @@ class TestSameSourceEvidenceHash:
 
     def test_description_presence_changes_hash(self):
         h1 = compute_evidence_hash(scope="same_source", job_url="https://example.com/1", description=None)
-        h2 = compute_evidence_hash(scope="same_source", job_url="https://example.com/1", description="Python SQL")
+        h2 = compute_evidence_hash(
+            scope="same_source",
+            job_url="https://example.com/1",
+            description="Python SQL AWS experience required",
+        )
         assert h1 != h2  # Phase 2 added description → stale
 
     def test_date_change_changes_hash(self):
@@ -52,17 +57,40 @@ class TestSameSourceEvidenceHash:
         assert h1 == h2
 
     def test_description_text_change_presence_same_does_not_change_hash(self):
-        """select_canonical only uses description PRESENCE, not content."""
-        h1 = compute_evidence_hash(scope="same_source", job_url="https://example.com/1", description="Python SQL")
-        h2 = compute_evidence_hash(scope="same_source", job_url="https://example.com/1", description="Java Spring Docker Kubernetes")
+        """select_canonical only uses usable-description presence, not content."""
+        h1 = compute_evidence_hash(
+            scope="same_source",
+            job_url="https://example.com/1",
+            description="Python SQL AWS experience required",
+        )
+        h2 = compute_evidence_hash(
+            scope="same_source",
+            job_url="https://example.com/1",
+            description="Java Spring Docker Kubernetes experience required",
+        )
         assert h1 == h2
 
-    def test_fragment_differences_produce_different_url_hash(self):
-        """Canonicalization happens before insertion, so URLs with fragments
-        shouldn't reach the fingerprint.  Different raw URLs produce different hashes."""
+    @pytest.mark.parametrize(
+        "placeholder",
+        [
+            "Competencias añadidas por la empresa",
+            "Buscar es más fácil en la app",
+        ],
+    )
+    def test_placeholder_to_usable_description_changes_hash(self, placeholder):
+        base = {"scope": "same_source", "job_url": "https://example.com/1"}
+        placeholder_hash = compute_evidence_hash(**base, description=placeholder)
+        usable_hash = compute_evidence_hash(
+            **base,
+            description="Python SQL AWS experience required",
+        )
+        assert placeholder_hash != usable_hash
+
+    def test_fragment_differences_produce_same_url_hash(self):
+        """Same-source evidence uses the canonical URL group identity."""
         h1 = compute_evidence_hash(scope="same_source", job_url="https://example.com/job/1#lc=A")
         h2 = compute_evidence_hash(scope="same_source", job_url="https://example.com/job/1#lc=B")
-        assert h1 != h2  # raw URLs differ; canonicalization is upstream
+        assert h1 == h2
 
     def test_nlp_writes_do_not_change_hash(self):
         """cleaned_description, skills_json etc. are NOT in same-source payload."""
@@ -142,3 +170,8 @@ class TestHashProperties:
     def test_invalid_scope_raises(self):
         with pytest.raises(ValueError):
             compute_evidence_hash(scope="invalid", job_url="x")
+
+
+def test_scope_versions_are_independent():
+    assert SAME_SOURCE_DEDUP_VERSION == "1.1.0"
+    assert CROSS_SOURCE_DEDUP_VERSION == "1.0.0"

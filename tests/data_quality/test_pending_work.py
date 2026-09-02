@@ -8,6 +8,7 @@ from sqlalchemy import JSON, StaticPool, create_engine, text
 from sqlalchemy.orm import Session
 
 from src.database.models import Base, Job, JobDuplicateLink
+from src.data_quality.dedup_checkpoint import record_checkpoint
 from src.data_quality.pending_work import PendingWorkInspector, PendingWorkSummary
 from src.nlp.description_preparer import unusable_description_filter, is_usable
 
@@ -510,25 +511,55 @@ class TestDedupPending:
         assert result.dedup_pending_same_source == "1"
 
     def test_dedup_pending_zero_when_checkpoint_exists(self, session):
-        """Jobs with checkpoints should not count as pending."""
-        from datetime import datetime
-        from src.database.models import JobDedupCheck
+        """Jobs with matching current-version checkpoints are not pending."""
         _add_all(session, _job(1, site="computrabajo", description="Python SQL AWS experience needed"))
-        session.add(
-            JobDedupCheck(
-                job_id=1, scope="same_source", dedup_version="1.0.0",
-                checked_at=datetime(2026, 8, 9),
-                evidence_hash="abc123",
-            )
-        )
-        session.commit()
-        inspector = PendingWorkInspector()
-        with patch(
-            "src.data_quality.pending_work.db_connect",
-            return_value=session.get_bind(),
-        ):
-            result = inspector.inspect()
+        record_checkpoint(session, 1, scope="same_source")
+        result = PendingWorkInspector()._inspect(session)
         assert result.dedup_pending_same_source == "0"
+
+    def test_partial_group_state_counts_one_pending_group(self, session):
+        group_url = "https://mx.computrabajo.com/job/group"
+        _add_all(
+            session,
+            _job(1, site="computrabajo", job_url=f"{group_url}#lc=A"),
+            _job(2, site="computrabajo", job_url=f"{group_url}#lc=B"),
+            _job(3, site="computrabajo", job_url="https://mx.computrabajo.com/job/other"),
+        )
+        record_checkpoint(session, 1, scope="same_source")
+        record_checkpoint(session, 3, scope="same_source")
+
+        result = PendingWorkInspector()._inspect(session)
+
+        assert result.dedup_pending_same_source == "1"
+        assert result.dedup_pending_same_source_groups == "1"
+
+    def test_no_pending_members_counts_zero_groups(self, session):
+        _add_all(session, _job(1, site="computrabajo"))
+        record_checkpoint(session, 1, scope="same_source")
+
+        result = PendingWorkInspector()._inspect(session)
+
+        assert result.dedup_pending_same_source == "0"
+        assert result.dedup_pending_same_source_groups == "0"
+
+    def test_confirmed_duplicate_staleness_counts_member_and_group(self, session):
+        group_url = "https://mx.computrabajo.com/job/group"
+        _add_all(
+            session,
+            _job(1, site="computrabajo", job_url=f"{group_url}#lc=A"),
+            _job(2, site="computrabajo", job_url=f"{group_url}#lc=B"),
+            _link(dup=2, canon=1, scope="same_source", status="confirmed"),
+        )
+        for job_id in (1, 2):
+            record_checkpoint(session, job_id, scope="same_source")
+        session.query(Job).filter(Job.id == 2).update({"salary_min": 35_000})
+        session.commit()
+
+        result = PendingWorkInspector()._inspect(session)
+
+        assert result.dedup_pending_same_source == "1"
+        assert result.dedup_pending_same_source_groups == "1"
+        assert result.canonical_jobs == 1
 
     def test_non_computrabajo_not_same_source_eligible(self, session):
         """Indeed jobs are not eligible for same_source dedup."""

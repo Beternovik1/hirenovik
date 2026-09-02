@@ -35,14 +35,14 @@ if str(_project_root) not in sys.path:
 
 from src.database.models import JobDuplicateLink, db_connect
 from src.nlp.backfill_manifest import BackfillManifest, DEFAULT_ARTIFACTS_DIR
-from urllib.parse import urlsplit, urlunsplit
-
 logger = logging.getLogger(__name__)
 
 #: Deduplication logic version — re-exported from the shared constant
 #: in ``src.data_quality`` so both dedup checkpoints and confirmed
 #: links use the same identifier.
 from src.data_quality import DEDUP_VERSION  # noqa: F811
+from src.data_quality.same_source_url import canonicalize_computrabajo_url
+from src.nlp.description_preparer import is_usable
 
 #: Known dedup scopes.
 SCOPE_SAME_SOURCE = "same_source"
@@ -55,18 +55,7 @@ METHOD_COMPUTRABAJO_URL = "computrabajo_canonical_url"
 STATUS_CONFIRMED = "confirmed"
 
 
-def _canonicalize_url(url: str) -> str:
-    """Remove URL fragment — same logic as canonicalize_computrabajo_url.
-
-    Inlined to avoid importing the full scraper module.
-    """
-    if not isinstance(url, str) or not url.strip():
-        return url if isinstance(url, str) else ""
-    try:
-        parts = urlsplit(url)
-        return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
-    except (ValueError, AttributeError):
-        return url
+_canonicalize_url = canonicalize_computrabajo_url
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +68,7 @@ def select_canonical(rows: list[dict]) -> dict:
 
     Strategy (in priority order):
     1. Has ``salary_min`` or ``salary_max`` → more complete data.
-    2. Has ``description`` → richer metadata.
+    2. Has *usable* ``description`` (not a placeholder, long enough).
     3. Earliest ``date_scraped`` → oldest observation.
     4. Lowest ``id`` → deterministic tie-break.
 
@@ -95,7 +84,8 @@ def select_canonical(rows: list[dict]) -> dict:
 
     def score(r: dict) -> tuple:
         has_salary = 1 if (r.get("salary_min") is not None or r.get("salary_max") is not None) else 0
-        has_desc = 1 if (r.get("description") and str(r["description"]).strip()) else 0
+        raw_desc = r.get("description")
+        has_desc = 1 if (raw_desc and is_usable(str(raw_desc))) else 0
         # Earliest date → sort ascending (lower is better); None → far future
         date_val = r.get("date_scraped")
         if date_val is None:
@@ -305,7 +295,7 @@ class JobDeduplicator:
         """Group rows by canonicalized URL."""
         groups: dict[str, list[dict]] = {}
         for row in rows:
-            canonical = _canonicalize_url(row["job_url"] or "")
+            canonical = canonicalize_computrabajo_url(row["job_url"] or "")
             if canonical not in groups:
                 groups[canonical] = []
             groups[canonical].append(row)

@@ -95,7 +95,8 @@ class PendingWorkSummary:
     blocked_no_description: int = 0
 
     # Dedup (scope-specific; "checkpoint_not_available" if table missing)
-    dedup_pending_same_source: Optional[str] = None
+    dedup_pending_same_source: Optional[str] = None   # pending members
+    dedup_pending_same_source_groups: Optional[str] = None  # pending URL groups
     dedup_pending_cross_source: Optional[str] = None
 
     # ------------------------------------------------------------------
@@ -104,6 +105,11 @@ class PendingWorkSummary:
         ss = (
             self.dedup_pending_same_source
             if self.dedup_pending_same_source is not None
+            else "unknown"
+        )
+        ssg = (
+            self.dedup_pending_same_source_groups
+            if self.dedup_pending_same_source_groups is not None
             else "unknown"
         )
         cs = (
@@ -132,7 +138,8 @@ class PendingWorkSummary:
             f"Blocked/no desc:   {self.blocked_no_description:>10,}\n"
             f"\n"
             f"Dedup pending:\n"
-            f"  same_source:     {ss:>10}\n"
+            f"  same_source:     {ss:>10} members\n"
+            f"  same_source:     {ssg:>10} groups\n"
             f"  cross_source:    {cs:>10}\n"
         )
 
@@ -221,7 +228,25 @@ class PendingWorkInspector:
             except Exception:
                 return "checkpoint_not_available"
 
-        s.dedup_pending_same_source = _pending("same_source")
+        def _same_source_pending() -> tuple[str, str]:
+            try:
+                from src.data_quality.same_source_planner import (
+                    plan_pending_same_source_groups,
+                )
+
+                plan = plan_pending_same_source_groups(session)
+                pending_members = sum(
+                    len(group.pending_member_ids) for group in plan
+                )
+                return str(pending_members), str(len(plan))
+            except Exception:
+                unavailable = "checkpoint_not_available"
+                return unavailable, unavailable
+
+        (
+            s.dedup_pending_same_source,
+            s.dedup_pending_same_source_groups,
+        ) = _same_source_pending()
         s.dedup_pending_cross_source = _pending("cross_source")
 
         return s

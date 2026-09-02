@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Optional, Sequence
 
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from src.data_quality import SAME_SOURCE_DEDUP_VERSION, CROSS_SOURCE_DEDUP_VERSION
@@ -50,8 +51,20 @@ def _fetch_job_evidence(session: Session, job_id: int) -> dict:
     }
 
 
-def _current_evidence_hash(session: Session, job_id: int, scope: str) -> str:
-    """Compute the current evidence hash for *job_id* in *scope*."""
+def current_evidence_hash(session: Session, job_id: int, scope: str) -> str:
+    """Return the current scope-specific evidence hash for a persisted job.
+
+    Args:
+        session: SQLAlchemy session used to load the job.
+        job_id: Persisted job identifier.
+        scope: ``"same_source"`` or ``"cross_source"``.
+
+    Returns:
+        The deterministic hash of the job's current dedup evidence.
+
+    Raises:
+        ValueError: If the job does not exist or the scope is unknown.
+    """
     evidence = _fetch_job_evidence(session, job_id)
     return compute_evidence_hash(
         scope=scope,
@@ -66,33 +79,6 @@ def _current_evidence_hash(session: Session, job_id: int, scope: str) -> str:
     )
 
 
-def _checkpoint_staleness(
-    session: Session,
-    job_id: int,
-    scope: str,
-    dedup_version: str,
-    expected_hash: str,
-) -> bool:
-    """Return True if the *job_id* checkpoint for *scope* is stale.
-
-    A checkpoint is stale when the stored ``evidence_hash`` differs
-    from the current evidence.  A missing checkpoint (no row) is not
-    stale — it's simply absent.
-    """
-    existing = (
-        session.query(JobDedupCheck.evidence_hash)
-        .filter(
-            JobDedupCheck.job_id == job_id,
-            JobDedupCheck.scope == scope,
-            JobDedupCheck.dedup_version == dedup_version,
-        )
-        .scalar()
-    )
-    if existing is None:
-        return False  # absent, not stale
-    return existing != expected_hash
-
-
 def record_checkpoint(
     session: Session,
     job_id: int,
@@ -103,9 +89,9 @@ def record_checkpoint(
 ) -> JobDedupCheck:
     """Record that *job_id* was evaluated for *scope*.
 
-    Idempotent: if a checkpoint already exists for (job_id, scope,
-    dedup_version), this is a no-op — the evidence_hash is NOT updated
-    (the checkpoint is immutable for a given version).
+    If the key already exists with stale evidence, update ``evidence_hash``
+    and ``checked_at`` under the same version. If the hash is unchanged,
+    perform no update and preserve the original timestamp.
 
     The evidence_hash is computed automatically from the current job
     state.  The caller does NOT need to supply it.
@@ -122,25 +108,35 @@ def record_checkpoint(
     """
     ts = checked_at or datetime.now(timezone.utc)
     ver = dedup_version or SCOPE_VERSION.get(scope, "1.0.0")
-    ehash = _current_evidence_hash(session, job_id, scope)
+    ehash = current_evidence_hash(session, job_id, scope)
 
-    stmt = (
-        pg_insert(JobDedupCheck)
-        .values(
-            job_id=job_id,
-            scope=scope,
-            dedup_version=ver,
-            checked_at=ts,
-            evidence_hash=ehash,
-        )
-        .on_conflict_do_nothing(
-            index_elements=["job_id", "scope", "dedup_version"]
-        )
+    insert = (
+        sqlite_insert
+        if session.get_bind().dialect.name == "sqlite"
+        else pg_insert
+    )
+    stmt = insert(JobDedupCheck).values(
+        job_id=job_id,
+        scope=scope,
+        dedup_version=ver,
+        checked_at=ts,
+        evidence_hash=ehash,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["job_id", "scope", "dedup_version"],
+        set_={
+            "checked_at": stmt.excluded.checked_at,
+            "evidence_hash": stmt.excluded.evidence_hash,
+        },
+        where=JobDedupCheck.evidence_hash.is_distinct_from(
+            stmt.excluded.evidence_hash
+        ),
     )
     session.execute(stmt)
 
     return (
         session.query(JobDedupCheck)
+        .populate_existing()
         .filter(
             JobDedupCheck.job_id == job_id,
             JobDedupCheck.scope == scope,
@@ -163,16 +159,19 @@ def has_checkpoint(
     the stored evidence_hash matches the current job evidence.
     """
     ver = dedup_version or SCOPE_VERSION.get(scope, "1.0.0")
-    ehash = _current_evidence_hash(session, job_id, scope)
-    return not _checkpoint_staleness(session, job_id, scope, ver, ehash) and (
+    checkpoint = (
         session.query(JobDedupCheck)
         .filter(
             JobDedupCheck.job_id == job_id,
             JobDedupCheck.scope == scope,
             JobDedupCheck.dedup_version == ver,
         )
-        .count()
-        > 0
+        .one_or_none()
+    )
+    return (
+        checkpoint is not None
+        and checkpoint.evidence_hash
+        == current_evidence_hash(session, job_id, scope)
     )
 
 
@@ -183,7 +182,11 @@ def missing_checkpoint_ids(
     *,
     dedup_version: Optional[str] = None,
 ) -> list[int]:
-    """Return the subset of *candidate_ids* lacking a current checkpoint."""
+    """Return missing or stale candidate IDs in their input order.
+
+    A checkpoint is current only when it exists for the requested scope and
+    version and its stored hash equals freshly computed evidence for that job.
+    """
     if not candidate_ids:
         return []
     ver = dedup_version or SCOPE_VERSION.get(scope, "1.0.0")
@@ -205,7 +208,7 @@ def missing_checkpoint_ids(
         if stored is None:
             pending.append(jid)
         else:
-            current = _current_evidence_hash(session, jid, scope)
+            current = current_evidence_hash(session, jid, scope)
             if stored != current:
                 pending.append(jid)
 
@@ -219,10 +222,17 @@ def count_pending(
     dedup_version: Optional[str] = None,
     eligible_only: bool = True,
 ) -> int:
-    """Count canonical jobs pending dedup evaluation for *scope*.
+    """Count jobs pending dedup evaluation for *scope*.
 
     A job is pending if it lacks a current (non-stale) checkpoint for
-    the given scope and version.  Confirmed duplicates are excluded.
+    the given scope and version.
+
+    For **same_source**: ALL Computrabajo rows participate, including
+    confirmed duplicates — a duplicate may gain evidence during Phase 2
+    and become a better canonical.
+
+    For **cross_source**: confirmed duplicates are excluded (canonical
+    analytics semantics).
 
     Args:
         scope: ``"same_source"`` or ``"cross_source"``.
@@ -231,35 +241,24 @@ def count_pending(
     """
     from src.data_quality import confirmed_duplicate_filter
 
-    ver = dedup_version or SCOPE_VERSION.get(scope, "1.0.0")
-
-    # Start with all canonical jobs.
-    query = session.query(Job).filter(confirmed_duplicate_filter(Job))
-
-    if eligible_only:
-        if scope == "same_source":
-            query = query.filter(Job.site == "computrabajo")
-        elif scope == "cross_source":
+    # Same-source freshness includes ALL Computrabajo rows;
+    # cross-source uses canonical-analytics dedup filtering.
+    if scope == "same_source":
+        query = session.query(Job).filter(Job.site == "computrabajo")
+    else:
+        query = session.query(Job).filter(confirmed_duplicate_filter(Job))
+        if eligible_only and scope == "cross_source":
             query = query.filter(
                 Job.description.isnot(None),
                 Job.description != "",
             )
 
-    # Exclude jobs with current non-stale checkpoints.
-    # This is an approximation: we can't filter stale vs current
-    # in pure SQL without computing hashes per-row.  For the pending
-    # count, we count jobs WITHOUT any checkpoint for this scope/version
-    # plus those where evidence may have changed.
-    #
-    # For the status inspector this is sufficient — the exact staleness
-    # check belongs to the orchestrator which has per-job context.
-    checked_ids = (
-        session.query(JobDedupCheck.job_id)
-        .filter(
-            JobDedupCheck.scope == scope,
-            JobDedupCheck.dedup_version == ver,
+    candidate_ids = [job_id for (job_id,) in query.with_entities(Job.id).all()]
+    return len(
+        missing_checkpoint_ids(
+            session,
+            candidate_ids,
+            scope,
+            dedup_version=dedup_version,
         )
-        .subquery()
     )
-
-    return query.filter(~Job.id.in_(session.query(checked_ids.c.job_id))).count()

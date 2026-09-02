@@ -6,7 +6,7 @@ from sqlalchemy.sql import exists
 #: Current same-source dedup logic version (Computrabajo URL grouping).
 #: Increment when the canonical-selection algorithm or grouping rules
 #: change in a way that would affect existing evaluations.
-SAME_SOURCE_DEDUP_VERSION = "1.0.0"
+SAME_SOURCE_DEDUP_VERSION = "1.1.0"
 
 #: Current cross-source dedup logic version (title/company/description
 #: similarity with guard thresholds).  Independently versioned because
